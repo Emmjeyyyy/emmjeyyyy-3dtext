@@ -3,6 +3,8 @@ import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+import { FontLoader } from 'three/examples/jsm/loaders/FontLoader.js'
+import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js'
 import { Config } from './config'
 import { particleVertexShader, particleFragmentShader } from './shaders'
 import { backgroundVertexShader, backgroundFragmentShader } from './shaders'
@@ -83,7 +85,7 @@ function App() {
     const trailMat = new THREE.ShaderMaterial({
       uniforms: {
         uPixelRatio: { value: 1 },
-        uPointSize: { value: Config.particleSize * 50 },
+        uPointSize: { value: Config.particleSize * 25 },
         uTexture: { value: texture }
       },
       vertexShader: particleVertexShader,
@@ -94,6 +96,7 @@ function App() {
     })
     
     const trailPoints = new THREE.Points(trailGeom, trailMat)
+    trailPoints.position.z = 6  // Render in front of text (z=1)
     s.add(trailPoints)
 
     // Create background
@@ -116,12 +119,17 @@ function App() {
     bgMesh.position.z = -5
     s.add(bgMesh)
 
+    // Create 3D metallic text placeholder (will be loaded with font)
+    let textMesh = null
+    let textMaterial = null
+
     return { 
       scene: s, 
       camera: c, 
       frustumSize: frustum, 
       trail: { points: trailPoints, material: trailMat, history },
-      bg: { mesh: bgMesh, material: bgMat, geometry: bgGeom }
+      bg: { mesh: bgMesh, material: bgMat, geometry: bgGeom },
+      text: { mesh: textMesh, material: textMaterial }
     }
   }, [])
 
@@ -176,6 +184,64 @@ function App() {
         new THREE.Vector2(window.innerWidth, window.innerHeight),
         Config.bloomStrength, Config.bloomRadius, Config.bloomThreshold
       ))
+
+      // Create premium iridescent material with soft, blurred reflections
+      const iridescentMaterial = new THREE.MeshPhysicalMaterial({
+        color: 0xe8f4ff,
+        metalness: 0.7,  // Lower for softer reflections
+        roughness: 0.35,  // Higher for more blurred/fuzzy highlights
+        clearcoat: 0.5,  // Less clearcoat for softer look
+        clearcoatRoughness: 0.4,
+        reflectivity: 0.5,
+        iridescence: 0.3,  // Very subtle iridescence
+        iridescenceIOR: 1.3,
+        iridescenceThicknessRange: [300, 700],
+        sheen: 0.3,  // Subtle sheen
+        sheenRoughness: 0.5,  // Fuzzy sheen
+        sheenColor: new THREE.Color(0x88ccff),
+        emissive: 0x0a1520,
+        emissiveIntensity: 0.02
+      })
+
+      // Add dynamic circular spot lights matching trail color (cyan/blue)
+      const keyLight = new THREE.PointLight(0x88ddff, 1.2, 15)  // Cyan - shorter range for circular falloff
+      keyLight.position.set(5, 5, 5)
+      scene.add(keyLight)
+
+      const fillLight = new THREE.PointLight(0x66bbff, 0.8, 12)  // Blue-cyan
+      fillLight.position.set(-5, 3, 3)
+      scene.add(fillLight)
+
+      const rimLight = new THREE.PointLight(0x99ccff, 1.0, 10)  // Light blue
+      rimLight.position.set(0, -3, 5)
+      scene.add(rimLight)
+
+      // Add ambient light for base illumination - subtle cyan tint
+      const ambientLight = new THREE.AmbientLight(0x334455, 0.3)
+      scene.add(ambientLight)
+
+      // Load font and create 3D text centered in scene
+      const fontLoader = new FontLoader()
+      fontLoader.load('https://threejs.org/examples/fonts/helvetiker_bold.typeface.json', (font) => {
+        const textGeo = new TextGeometry('EMMJEYYYY', {
+          font: font,
+          size: 1.8,
+          height: 0.5,
+          curveSegments: 16,
+          bevelEnabled: true,
+          bevelThickness: 0.1,
+          bevelSize: 0.08,
+          bevelOffset: 0,
+          bevelSegments: 12
+        })
+        
+        // Center the geometry
+        textGeo.center()
+        
+        const textMesh = new THREE.Mesh(textGeo, iridescentMaterial)
+        textMesh.position.set(0, 0, 1)  // Center in viewport
+        scene.add(textMesh)
+      })
 
       clock = new THREE.Clock()
 
@@ -246,18 +312,20 @@ function App() {
           
           posAttr.array[i * 3] = h.x * halfWidth
           posAttr.array[i * 3 + 1] = h.y * halfHeight
-          posAttr.array[i * 3 + 2] = 0
+          posAttr.array[i * 3 + 2] = 2  // Offset for front rendering
           
           const baseSize = Config.particleSize * (1 - t * 0.85)
           const velocityBoost = 1 + h.velocity * 0.12
-          sizeAttr.array[i] = baseSize * velocityBoost
+          // Add ripple effect - pulsing size based on time and particle age
+          const ripple = 1 + Math.sin(time * 8 + t * 10) * 0.3 * (1 - t)
+          sizeAttr.array[i] = baseSize * velocityBoost * ripple
           
-          const ageFade = Math.pow(1 - t, 1.8)
+          const ageFade = Math.pow(1 - t, 1.2)  // Smoother fade curve
           const velocityThreshold = 1.5
           const velocityFade = h.velocity < velocityThreshold 
             ? 0 
-            : Math.min((h.velocity - velocityThreshold) * 0.1, 1)
-          alphaAttr.array[i] = ageFade * velocityFade * Config.particleOpacity
+            : Math.min(Math.pow((h.velocity - velocityThreshold) * 0.08, 0.8), 1)  // Smoother velocity fade
+          alphaAttr.array[i] = ageFade * velocityFade * Config.particleOpacity * 1.2  // Slightly higher for glow
           
           const hue = (Config.baseHue + t * 25 + time * 8) % 360
           const color = new THREE.Color()
@@ -280,6 +348,48 @@ function App() {
         // Update SVG mask
         updateMask(history, window.innerWidth, window.innerHeight)
         
+        // Update 3D text - subtle rotation based on mouse position
+        scene.traverse((child) => {
+          if (child instanceof THREE.Mesh && child.geometry instanceof TextGeometry) {
+            child.rotation.x = smoothedCursor.y * 0.15
+            child.rotation.y = smoothedCursor.x * 0.15
+            // Dynamic color matching trail
+            const trailHue = (Config.baseHue + time * 8) % 360
+            const trailColor = new THREE.Color()
+            trailColor.setHSL(trailHue / 360, 0.8, 0.6)
+            child.material.emissive.copy(trailColor).multiplyScalar(0.015 + velocity * 0.008)
+            child.material.sheenColor.copy(trailColor)
+          }
+          // Update dynamic circular spot lights with color matching trail (dynamic hue)
+          if (child instanceof THREE.PointLight) {
+            // Calculate distance from center (where text is)
+            const distFromCenter = Math.sqrt(smoothedCursor.x * smoothedCursor.x + smoothedCursor.y * smoothedCursor.y)
+            const proximityFactor = Math.max(0, 1 - distFromCenter * 0.5)
+            
+            // Dynamic color matching trail - uses same hue calculation as particles
+            const trailHue = (Config.baseHue + time * 8) % 360
+            const trailColor = new THREE.Color()
+            trailColor.setHSL(trailHue / 360, 0.8, 0.7)
+            
+            if (child === keyLight) {
+              child.position.x = smoothedCursor.x * 8 + 5
+              child.position.y = smoothedCursor.y * 5 + 5
+              child.intensity = 0.3 + proximityFactor * 0.3  // Reduced intensity
+              child.color.copy(trailColor)
+            } else if (child === fillLight) {
+              child.position.x = smoothedCursor.x * 8 - 5
+              child.position.y = smoothedCursor.y * 5 + 3
+              child.intensity = 0.2 + proximityFactor * 0.2  // Reduced intensity
+              child.color.copy(trailColor).offsetHSL(0, -0.1, -0.1)
+            } else if (child === rimLight) {
+              child.position.x = smoothedCursor.x * 8
+              child.position.y = smoothedCursor.y * 5 - 3
+              child.intensity = 0.25 + proximityFactor * 0.25  // Reduced intensity
+              child.color.copy(trailColor).offsetHSL(0.02, 0.1, 0.1)
+            }
+          }
+        })
+        
         composer.render()
       }
 
@@ -294,6 +404,12 @@ function App() {
         }
         renderer.dispose()
         composer.dispose()
+        // Dispose lights
+        scene.traverse((child) => {
+          if (child instanceof THREE.PointLight) {
+            child.dispose()
+          }
+        })
       }
     } catch (err) {
       console.error(err)
@@ -334,53 +450,18 @@ function App() {
         fontFamily: "'Cormorant Garamond', Georgia, serif",
         pointerEvents: 'none'
       }}>
-        {/* Hidden black text - revealed by mask */}
+        {/* 3D text rendered via Three.js - hidden HTML text */}
         <h1 style={{
           position: 'absolute',
           fontSize: 'clamp(3rem, 10vw, 8rem)',
           fontWeight: 300,
           letterSpacing: '0.4em',
           textTransform: 'uppercase',
-          color: '#000000',
-          marginBottom: '0.5rem',
-          mixBlendMode: 'multiply'
-        }}>
-          Fluid
-        </h1>
-        
-        {/* White text on top */}
-        <h1 style={{
-          position: 'absolute',
-          fontSize: 'clamp(3rem, 10vw, 8rem)',
-          fontWeight: 300,
-          letterSpacing: '0.4em',
-          textTransform: 'uppercase',
-          background: `
-            linear-gradient(
-              135deg,
-              #f5f5fa 0%,
-              #e8e8f2 15%,
-              #d0d0dd 25%,
-              #f8f8ff 35%,
-              #e0e0ed 45%,
-              #c8c8d5 55%,
-              #f0f0fa 65%,
-              #d8d8e5 75%,
-              #e5e5f0 85%,
-              #f5f5ff 100%
-            )
-          `,
-          WebkitBackgroundClip: 'text',
-          backgroundClip: 'text',
           color: 'transparent',
-          marginBottom: '0.5rem',
-          textShadow: `
-            0 0 40px rgba(220, 225, 255, 0.5),
-            0 0 80px rgba(200, 210, 255, 0.3),
-            0 0 120px rgba(180, 195, 255, 0.15)
-          `
+          WebkitTextFillColor: 'transparent',
+          marginBottom: '0.5rem'
         }}>
-          Fluid
+          EMMJEYYYY
         </h1>
         
         <p style={{

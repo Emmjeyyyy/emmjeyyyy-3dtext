@@ -60,7 +60,7 @@ export function useCursorTrail(renderer) {
     const mat = new THREE.ShaderMaterial({
       uniforms: {
         uPixelRatio: { value: renderer?.getPixelRatio() || 1 },
-        uPointSize: { value: Config.particleSize * 50 },
+        uPointSize: { value: Config.particleSize * 25 },
         uTexture: { value: texture }
       },
       vertexShader: particleVertexShader,
@@ -103,14 +103,16 @@ export function updateCursorTrail(points, history, smoothedCursor, velocity, tim
     
     const baseSize = Config.particleSize * (1 - t * 0.85)
     const velocityBoost = 1 + h.velocity * 0.12
-    sizeAttr.array[i] = baseSize * velocityBoost
+    // Add ripple effect - pulsing size based on time and particle age
+    const ripple = 1 + Math.sin(time * 8 + t * 10) * 0.3 * (1 - t)
+    sizeAttr.array[i] = baseSize * velocityBoost * ripple
     
-    const ageFade = Math.pow(1 - t, 1.8)
+    const ageFade = Math.pow(1 - t, 1.2)  // Smoother fade curve
     const velocityThreshold = 1.5
     const velocityFade = h.velocity < velocityThreshold 
       ? 0 
-      : Math.min((h.velocity - velocityThreshold) * 0.1, 1)
-    alphaAttr.array[i] = ageFade * velocityFade * Config.particleOpacity
+      : Math.min(Math.pow((h.velocity - velocityThreshold) * 0.08, 0.8), 1)  // Smoother velocity fade
+    alphaAttr.array[i] = ageFade * velocityFade * Config.particleOpacity * 1.2  // Slightly higher for glow
     
     const hue = (Config.baseHue + t * 25 + time * 8) % 360
     const color = new THREE.Color()
