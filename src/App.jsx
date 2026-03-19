@@ -253,10 +253,10 @@ function App() {
           sizeAttr.array[i] = baseSize * velocityBoost
           
           const ageFade = Math.pow(1 - t, 1.8)
-          const velocityThreshold = 0.3
+          const velocityThreshold = 1.5
           const velocityFade = h.velocity < velocityThreshold 
             ? 0 
-            : Math.min((h.velocity - velocityThreshold) * 0.15, 1)
+            : Math.min((h.velocity - velocityThreshold) * 0.1, 1)
           alphaAttr.array[i] = ageFade * velocityFade * Config.particleOpacity
           
           const hue = (Config.baseHue + t * 25 + time * 8) % 360
