@@ -173,7 +173,7 @@ function App() {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
       renderer.setSize(window.innerWidth, window.innerHeight)
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-      renderer.setClearColor(0x0a0a0a, 1)
+      renderer.setClearColor(0x888888, 1)
       containerRef.current.appendChild(renderer.domElement)
 
       trail.material.uniforms.uPixelRatio.value = renderer.getPixelRatio()
@@ -419,7 +419,7 @@ function App() {
 
   return (
     <>
-      <div ref={containerRef} style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1, background: '#0a0a0a' }} />
+      <div ref={containerRef} style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1, background: '#888888' }} />
       
       {/* SVG Mask Layer - reveals black text */}
       <svg 
@@ -470,8 +470,7 @@ function App() {
           fontSize: 'clamp(0.8rem, 2vw, 1.1rem)',
           fontWeight: 400,
           letterSpacing: '0.6em',
-          opacity: 0.35,
-          color: '#e8e8e8',
+          color: '#000000',
           textTransform: 'uppercase'
         }}>
           Move your cursor
