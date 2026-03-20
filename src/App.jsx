@@ -18,17 +18,17 @@ function createCircleTexture() {
   canvas.width = size
   canvas.height = size
   const ctx = canvas.getContext('2d')
-  
-  const gradient = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2)
+
+  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2)
   gradient.addColorStop(0, 'rgba(255, 255, 255, 1)')
   gradient.addColorStop(0.2, 'rgba(255, 255, 255, 0.9)')
   gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.4)')
   gradient.addColorStop(0.8, 'rgba(255, 255, 255, 0.1)')
   gradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
-  
+
   ctx.fillStyle = gradient
   ctx.fillRect(0, 0, size, size)
-  
+
   return new THREE.CanvasTexture(canvas)
 }
 
@@ -47,10 +47,10 @@ function createEnvironmentTexture() {
   gradient.addColorStop(0.5, '#ffffff')    // Horizon line (sharp)
   gradient.addColorStop(0.52, '#202530')   // Ground top
   gradient.addColorStop(1, '#02050a')      // Deep ground
-  
+
   ctx.fillStyle = gradient
   ctx.fillRect(0, 0, size, size)
-  
+
   // Add some "cloud" interest (subtle horizontal streaks)
   for (let i = 0; i < 15; i++) {
     const y = Math.random() * size
@@ -70,14 +70,17 @@ function createEnvironmentTexture() {
 // ============================================
 function App() {
   const containerRef = useRef(null)
-  const textMeshRef = useRef(null)
+  const textMeshRef = useRef(null) // kept for compatibility in some logic
+  const letterMeshesRef = useRef([])
+  const isExplodedRef = useRef(false)
+  const isResettingRef = useRef(false)
   const [error, setError] = useState(null)
 
   // Initialize Three.js objects at component level
   const { scene, camera, frustumSize, trail, bg } = useMemo(() => {
     const aspect = window.innerWidth / window.innerHeight
     const frustum = 10
-    
+
     const s = new THREE.Scene()
     const c = new THREE.OrthographicCamera(
       -frustum * aspect / 2, frustum * aspect / 2,
@@ -92,31 +95,31 @@ function App() {
     const sizes = new Float32Array(count)
     const alphas = new Float32Array(count)
     const history = []
-    
+
     for (let i = 0; i < count; i++) {
       positions[i * 3] = 0
       positions[i * 3 + 1] = 0
       positions[i * 3 + 2] = 0
-      
+
       const color = new THREE.Color()
       color.setHSL(Config.baseHue / 360, Config.saturation, Config.lightness)
       colors[i * 3] = color.r
       colors[i * 3 + 1] = color.g
       colors[i * 3 + 2] = color.b
-      
+
       sizes[i] = 0
       alphas[i] = 0
       history.push({ x: 0, y: 0, velocity: 0 })
     }
-    
+
     const trailGeom = new THREE.BufferGeometry()
     trailGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     trailGeom.setAttribute('color', new THREE.BufferAttribute(colors, 3))
     trailGeom.setAttribute('size', new THREE.BufferAttribute(sizes, 1))
     trailGeom.setAttribute('alpha', new THREE.BufferAttribute(alphas, 1))
-    
+
     const texture = createCircleTexture()
-    
+
     const trailMat = new THREE.ShaderMaterial({
       uniforms: {
         uPixelRatio: { value: 1 },
@@ -129,7 +132,7 @@ function App() {
       blending: THREE.AdditiveBlending,
       depthWrite: false
     })
-    
+
     const trailPoints = new THREE.Points(trailGeom, trailMat)
     trailPoints.position.z = 6  // Render in front of text (z=1)
     s.add(trailPoints)
@@ -149,7 +152,7 @@ function App() {
       fragmentShader: backgroundFragmentShader,
       transparent: false
     })
-    
+
     const bgMesh = new THREE.Mesh(bgGeom, bgMat)
     bgMesh.position.z = -5
     s.add(bgMesh)
@@ -158,10 +161,10 @@ function App() {
     let textMesh = null
     let textMaterial = null
 
-    return { 
-      scene: s, 
-      camera: c, 
-      frustumSize: frustum, 
+    return {
+      scene: s,
+      camera: c,
+      frustumSize: frustum,
       trail: { points: trailPoints, material: trailMat, history },
       bg: { mesh: bgMesh, material: bgMat, geometry: bgGeom },
       text: { mesh: textMesh, material: textMaterial }
@@ -246,13 +249,18 @@ function App() {
       const tmpLightColor2 = new THREE.Color()
       const tmpDeltaPos = new THREE.Vector2()
 
-      // Load font and create 3D text centered in scene
+      // Load font and create individual 3D letters for physics
       const fontLoader = new FontLoader()
-      
+
       fontLoader.load('https://threejs.org/examples/fonts/helvetiker_bold.typeface.json', (font) => {
         if (!isMounted) return
-        
-        let textGeo = new TextGeometry('EMMJEYYYY', {
+
+        const text = 'EMMJEYYYY'
+        const chars = text.split('')
+        const meshes = []
+
+        // Settings to match original look
+        const textOptions = {
           font: font,
           size: 1.8,
           height: 0.5,
@@ -262,17 +270,53 @@ function App() {
           bevelSize: 0.08,
           bevelOffset: 0,
           bevelSegments: 18
+        }
+
+        const letterGap = Config.textSpacing || 0.4
+        let totalWidth = 0
+        const charData = []
+
+        // First pass: create geometries and measure widths
+        chars.forEach((char) => {
+          let charGeo = new TextGeometry(char, textOptions)
+          charGeo = BufferGeometryUtils.mergeVertices(charGeo, 0.001)
+          charGeo.computeVertexNormals()
+          charGeo.computeBoundingBox()
+
+          const width = charGeo.boundingBox.max.x - charGeo.boundingBox.min.x
+          charData.push({ char, geo: charGeo, width })
+          totalWidth += width + letterGap
         })
-        
-        // Optimize geometry for smooth reflections
-        textGeo = BufferGeometryUtils.mergeVertices(textGeo, 0.001)
-        textGeo.computeVertexNormals()
-        textGeo.center()
-        
-        const mesh = new THREE.Mesh(textGeo, chromeMaterial)
-        mesh.position.set(0, 0, 1)  // Center in viewport
-        scene.add(mesh)
-        textMeshRef.current = mesh
+        totalWidth -= letterGap // remove last gap
+
+        // Second pass: position and create meshes
+        let currentX = -totalWidth / 2
+        charData.forEach((data, i) => {
+          const { geo, width } = data
+          geo.center() // center for better rotation
+
+          const mesh = new THREE.Mesh(geo, chromeMaterial)
+          // Position based on accumulated width
+          const posX = currentX + width / 2
+          mesh.position.set(posX, 0, 1)
+          currentX += width + letterGap
+
+          scene.add(mesh)
+
+          geo.computeBoundingSphere()
+          const radius = geo.boundingSphere.radius * 0.85
+
+          meshes.push({
+            mesh,
+            originalPos: mesh.position.clone(),
+            originalRot: mesh.rotation.clone(),
+            velocity: new THREE.Vector3(),
+            angularVelocity: new THREE.Vector3(),
+            radius
+          })
+        })
+
+        letterMeshesRef.current = meshes
       })
 
       clock = new THREE.Clock()
@@ -288,6 +332,33 @@ function App() {
       window.addEventListener('touchmove', e => e.touches[0] && updateMouse(e.touches[0].clientX, e.touches[0].clientY))
       window.addEventListener('touchstart', e => e.touches[0] && updateMouse(e.touches[0].clientX, e.touches[0].clientY))
 
+      // Click to scatter / Double-click to reset
+      const handleMouseDown = () => {
+        if (!isExplodedRef.current && !isResettingRef.current) {
+          isExplodedRef.current = true
+          letterMeshesRef.current.forEach(item => {
+            item.velocity.set(
+              (Math.random() - 0.5) * 15,
+              (Math.random() - 0.5) * 15,
+              (Math.random() - 0.5) * 10
+            )
+            item.angularVelocity.set(
+              (Math.random() - 0.5) * 0.2,
+              (Math.random() - 0.5) * 0.2,
+              (Math.random() - 0.5) * 0.2
+            )
+          })
+        }
+      }
+
+      const handleDoubleClick = () => {
+        isExplodedRef.current = false
+        isResettingRef.current = true
+      }
+
+      window.addEventListener('mousedown', handleMouseDown)
+      window.addEventListener('dblclick', handleDoubleClick)
+
       // Resize handler
       const onResize = () => {
         const w = window.innerWidth, h = window.innerHeight, a = w / h
@@ -299,7 +370,7 @@ function App() {
         camera.updateProjectionMatrix()
         renderer.setSize(w, h)
         composer.setSize(w, h)
-        
+
         bg.geometry.dispose()
         bg.geometry = new THREE.PlaneGeometry(fs * a * 2, fs * 2)
         bg.mesh.geometry = bg.geometry
@@ -313,17 +384,18 @@ function App() {
       // Animation loop
       const animate = () => {
         animationId = requestAnimationFrame(animate)
-        
-        const delta = Math.min(clock.getDelta(), 0.1)
+
+        const dt = clock.getDelta() // Raw delta time for physics
+        const delta = Math.min(dt, 0.1) // Capped delta time for smoothing
         const time = clock.getElapsedTime()
-        
+
         lastSmoothedCursor.copy(smoothedCursor)
-        const lerpFactor = 1 - Math.pow(1 - cursorDamping, delta * 60)
+        const lerpFactor = 1 - Math.pow(1 - cursorDamping, dt * 60)
         smoothedCursor.lerp(currentMouse, lerpFactor)
-        
+
         tmpDeltaPos.copy(smoothedCursor).sub(lastSmoothedCursor)
         velocity = Math.min(tmpDeltaPos.length() * Config.velocityMultiplier * 60, Config.maxVelocity)
-        
+
         // Update trail history
         const history = trail.history
         for (let i = history.length - 1; i > 0; i--) {
@@ -337,58 +409,133 @@ function App() {
         history[0].x = smoothedCursor.x
         history[0].y = smoothedCursor.y
         history[0].velocity = velocity
-        
+
         const aspect = window.innerWidth / window.innerHeight
-        const halfWidth = frustumSize * aspect / 2
-        const halfHeight = frustumSize / 2
-        
+        const hw = frustumSize * aspect / 2
+        const hh = frustumSize / 2
+
         const posAttr = trail.points.geometry.getAttribute('position')
         const sizeAttr = trail.points.geometry.getAttribute('size')
         const alphaAttr = trail.points.geometry.getAttribute('alpha')
         const colorAttr = trail.points.geometry.getAttribute('color')
-        
+
         for (let i = 0; i < Config.trailLength; i++) {
           const h = history[i]
           const t = i / Config.trailLength
-          
-          posAttr.array[i * 3] = h.x * halfWidth
-          posAttr.array[i * 3 + 1] = h.y * halfHeight
+
+          posAttr.array[i * 3] = h.x * hw
+          posAttr.array[i * 3 + 1] = h.y * hh
           posAttr.array[i * 3 + 2] = 2  // Offset for front rendering
-          
+
           const baseSize = Config.particleSize * (1 - t * 0.85)
           const velocityBoost = 1 + h.velocity * 0.12
           // Add ripple effect - pulsing size based on time and particle age
           const ripple = 1 + Math.sin(time * 8 + t * 10) * 0.3 * (1 - t)
           sizeAttr.array[i] = baseSize * velocityBoost * ripple
-          
+
           const ageFade = Math.pow(1 - t, 1.2)  // Smoother fade curve
           const velocityThreshold = 1.2
           // Smooth transition to avoid visible “on/off” popping (reads as jitter).
           const velocityFade = Math.pow(smoothstep(velocityThreshold, velocityThreshold + 1.3, h.velocity), 0.85)
           alphaAttr.array[i] = ageFade * velocityFade * Config.particleOpacity * 1.2  // Slightly higher for glow
-          
+
           const hue = (Config.baseHue + t * 25 + time * 8) % 360
           tmpColor.setHSL(hue / 360, Config.saturation, Config.lightness)
           colorAttr.array[i * 3] = tmpColor.r
           colorAttr.array[i * 3 + 1] = tmpColor.g
           colorAttr.array[i * 3 + 2] = tmpColor.b
         }
-        
+
         posAttr.needsUpdate = true
         sizeAttr.needsUpdate = true
         alphaAttr.needsUpdate = true
         colorAttr.needsUpdate = true
-        
+
         // Update background
         bg.material.uniforms.uTime.value = time
         bg.material.uniforms.uMouse.value.copy(smoothedCursor)
         bg.material.uniforms.uVelocity.value = velocity
 
-        // Update 3D text - subtle rotation based on mouse position
-        if (textMeshRef.current) {
-          textMeshRef.current.rotation.x = smoothedCursor.y * 0.15
-          textMeshRef.current.rotation.y = smoothedCursor.x * 0.15
-        }
+        // Update physics for each letter
+        const repulsionRadius = 4.0
+        const repulsionStrength = 0.5
+
+        letterMeshesRef.current.forEach((item, index) => {
+          const { mesh, velocity, angularVelocity, originalPos, originalRot, radius } = item
+
+          if (isExplodedRef.current) {
+            // Apply velocity damping
+            velocity.multiplyScalar(0.99)
+            angularVelocity.multiplyScalar(0.99)
+
+            // Update position and rotation
+            mesh.position.add(velocity.clone().multiplyScalar(dt))
+            mesh.rotation.x += angularVelocity.x
+            mesh.rotation.y += angularVelocity.y
+            mesh.rotation.z += angularVelocity.z
+
+            // Boundary checks (edges)
+            if (Math.abs(mesh.position.x) > hw - radius) {
+              velocity.x *= -0.8
+              mesh.position.x = Math.sign(mesh.position.x) * (hw - radius)
+            }
+            if (Math.abs(mesh.position.y) > hh - radius) {
+              velocity.y *= -0.8
+              mesh.position.y = Math.sign(mesh.position.y) * (hh - radius)
+            }
+            if (Math.abs(mesh.position.z) > 10) {
+              velocity.z *= -0.8
+              mesh.position.z = Math.sign(mesh.position.z) * 10
+            }
+
+            // Mouse proximity repulsion
+            tmpDeltaPos.set(mesh.position.x - currentMouse.x * hw, mesh.position.y - currentMouse.y * hh)
+            const distToMouse = tmpDeltaPos.length()
+            if (distToMouse < repulsionRadius) {
+              const force = (1.0 - distToMouse / repulsionRadius) * repulsionStrength
+              velocity.x += tmpDeltaPos.x * force
+              velocity.y += tmpDeltaPos.y * force
+            }
+
+            // Simple Circle-Circle Collision between letters
+            for (let j = index + 1; j < letterMeshesRef.current.length; j++) {
+              const other = letterMeshesRef.current[j]
+              const diff = mesh.position.clone().sub(other.mesh.position)
+              const minDist = radius + other.radius
+              if (diff.length() < minDist) {
+                // Resolve overlap
+                const overlap = minDist - diff.length()
+                const resolveVec = diff.normalize().multiplyScalar(overlap * 0.5)
+                mesh.position.add(resolveVec)
+                other.mesh.position.sub(resolveVec)
+
+                // Elastic collision (swap velocities roughly)
+                const tempVel = velocity.clone()
+                velocity.copy(other.velocity).multiplyScalar(0.8)
+                other.velocity.copy(tempVel).multiplyScalar(0.8)
+              }
+            }
+          } else if (isResettingRef.current) {
+            // Smoothly return to original layout
+            mesh.position.lerp(originalPos, 0.15)
+            mesh.rotation.x = THREE.MathUtils.lerp(mesh.rotation.x, originalRot.x, 0.15)
+            mesh.rotation.y = THREE.MathUtils.lerp(mesh.rotation.y, originalRot.y, 0.15)
+            mesh.rotation.z = THREE.MathUtils.lerp(mesh.rotation.z, originalRot.z, 0.15)
+            velocity.set(0, 0, 0)
+            angularVelocity.set(0, 0, 0)
+
+            // Stop resetting once very close
+            if (mesh.position.distanceTo(originalPos) < 0.001) {
+              mesh.position.copy(originalPos)
+              mesh.rotation.copy(originalRot)
+              if (index === letterMeshesRef.current.length - 1) isResettingRef.current = false
+            }
+          } else {
+            // Idle state - gentle hover or subtle rotation
+            mesh.rotation.x = smoothedCursor.y * 0.15
+            mesh.rotation.y = smoothedCursor.x * 0.15
+          }
+        })
 
         // Update dynamic circular spot lights with color matching trail (dynamic hue)
         // Calculate distance from center (where text is)
@@ -413,7 +560,7 @@ function App() {
         rimLight.intensity = 0.25 + proximityFactor * 0.25
         tmpLightColor2.copy(tmpLightColor).offsetHSL(0.02, 0.1, 0.1)
         rimLight.color.copy(tmpLightColor2)
-        
+
         composer.render()
       }
 
@@ -422,18 +569,20 @@ function App() {
       return () => {
         isMounted = false
         if (animationId) cancelAnimationFrame(animationId)
-        window.removeEventListener('mousemove', e => updateMouse(e.clientX, e.clientY))
-        window.removeEventListener('resize', onResize)
-        
-        if (textMeshRef.current) {
-          scene.remove(textMeshRef.current)
-          if (textMeshRef.current.geometry) textMeshRef.current.geometry.dispose()
-          if (textMeshRef.current.material) textMeshRef.current.material.dispose()
-          textMeshRef.current = null
-        }
-        
+        letterMeshesRef.current.forEach(item => {
+          if (item.mesh) {
+            scene.remove(item.mesh)
+            if (item.mesh.geometry) item.mesh.geometry.dispose()
+            if (item.mesh.material) item.mesh.material.dispose()
+          }
+        })
+        letterMeshesRef.current = []
+
+        window.removeEventListener('mousedown', handleMouseDown)
+        window.removeEventListener('dblclick', handleDoubleClick)
+
         envMap.dispose()
-        
+
         if (containerRef.current && renderer.domElement) {
           containerRef.current.removeChild(renderer.domElement)
         }
@@ -484,7 +633,7 @@ function App() {
         }}>
           EMMJEYYYY
         </h1>
-        
+
         <p style={{
           position: 'absolute',
           bottom: '25%',
@@ -497,7 +646,7 @@ function App() {
           Move your cursor
         </p>
       </div>
-      
+
       {error && <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', color: '#ff4444', zIndex: 10 }}>Error: {error}</div>}
     </>
   )
