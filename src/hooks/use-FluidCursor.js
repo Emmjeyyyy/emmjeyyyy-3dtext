@@ -900,14 +900,7 @@ const fluidCursor = () => {
   updateKeywords();
   initFramebuffers();
 
-  // Add initial splat in the center to make effect visible immediately
-  const centerX = 0.5;
-  const centerY = 0.5;
-  const color = generateColor();
-  color.r *= 10;
-  color.g *= 10;
-  color.b *= 10;
-  splat(centerX, centerY, 0, 0, color);
+  // Initial state is now clean - no stray particles on load.
 
   let lastUpdateTime = Date.now();
   let colorUpdateTimer = 0.0;
