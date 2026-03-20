@@ -144,7 +144,7 @@ function App() {
       const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)))
       return t * t * (3 - 2 * t)
     }
-    const cursorDamping = Math.min(0.25, Config.damping * 2.0)
+    const cursorDamping = Config.damping * 3.5 // SNR = Snappy Response!
 
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })

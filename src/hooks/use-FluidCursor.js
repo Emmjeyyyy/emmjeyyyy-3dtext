@@ -15,7 +15,7 @@ const fluidCursor = () => {
     PRESSURE_ITERATIONS: 20,
     CURL: 3,
     SPLAT_RADIUS: 0.2,
-    SPLAT_FORCE: 6000,
+    SPLAT_FORCE: 3500, // Slightly increased for visibility
     SHADING: true,
     COLOR_UPDATE_SPEED: 10,
     PAUSED: false,
@@ -33,7 +33,12 @@ const fluidCursor = () => {
     this.deltaY = 0;
     this.down = false;
     this.moved = false;
-    this.color = [0, 0, 0];
+    this.color = { r: 0, g: 0, b: 0 };
+    // Smooth interpolation tracking
+    this.lerpX = 0;
+    this.lerpY = 0;
+    this.prevLerpX = 0;
+    this.prevLerpY = 0;
   }
 
   const pointers = [];
@@ -955,9 +960,18 @@ const fluidCursor = () => {
 
   function applyInputs() {
     pointers.forEach((p) => {
-      if (p.moved) {
-        p.moved = false;
-        splatPointer(p);
+      // SNAPPY SMOOTHING - Match App.jsx feel.
+      const d = 0.5; 
+      p.prevLerpX = p.lerpX;
+      p.prevLerpY = p.lerpY;
+      p.lerpX += (p.texcoordX - p.lerpX) * d;
+      p.lerpY += (p.texcoordY - p.lerpY) * d;
+
+      const dx = correctDeltaX(p.lerpX - p.prevLerpX) * config.SPLAT_FORCE;
+      const dy = correctDeltaY(p.lerpY - p.prevLerpY) * config.SPLAT_FORCE;
+
+      if (p.color && typeof p.color.r !== 'undefined' && (Math.abs(dx) > 0.0001 || Math.abs(dy) > 0.0001)) {
+        splat(p.lerpX, p.lerpY, dx, dy, p.color);
       }
     });
   }
@@ -1227,6 +1241,12 @@ const fluidCursor = () => {
     pointer.deltaX = 0;
     pointer.deltaY = 0;
     pointer.color = generateColor();
+    
+    // Reset lerp positions to avoid jumping from old positions.
+    pointer.lerpX = pointer.texcoordX;
+    pointer.lerpY = pointer.texcoordY;
+    pointer.prevLerpX = pointer.texcoordX;
+    pointer.prevLerpY = pointer.texcoordY;
   }
 
   function updatePointerMoveData(pointer, posX, posY, color) {
