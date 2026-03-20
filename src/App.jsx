@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
@@ -36,7 +36,6 @@ function createCircleTexture() {
 // ============================================
 function App() {
   const containerRef = useRef(null)
-  const maskRef = useRef(null)
   const [error, setError] = useState(null)
 
   // Initialize Three.js objects at component level
@@ -134,34 +133,6 @@ function App() {
     }
   }, [])
 
-  // Update mask layer to reveal hidden text
-  const updateMask = useCallback((history, width, height) => {
-    if (!maskRef.current) return
-    
-    // Create SVG filter for blur effect
-    let html = ''
-    
-    for (let i = 0; i < Math.min(60, Config.trailLength); i++) {
-      const h = history[i]
-      if (h && h.velocity > 0.25) {
-        const screenX = ((h.x + 1) / 2) * width
-        const screenY = ((1 - h.y) / 2) * height
-        
-        const t = i / 60
-        const radius = 60 * (1 - t * 0.6)
-        const opacity = Math.pow(1 - t, 1.5) * Math.min((h.velocity - 0.25) * 0.2, 0.85)
-        
-        html += `<circle cx="${screenX}" cy="${screenY}" r="${radius}" fill="rgba(255,255,255,${opacity})" />`
-      }
-    }
-    
-    if (html) {
-      maskRef.current.innerHTML = html
-    } else {
-      maskRef.current.innerHTML = ''
-    }
-  }, [])
-
   useEffect(() => {
     let renderer, composer
     let smoothedCursor = new THREE.Vector2(0, 0)
@@ -169,15 +140,11 @@ function App() {
     let velocity = 0
     let animationId
     let clock
-    let lastMaskUpdate = 0
-    let maskWidth = window.innerWidth
-    let maskHeight = window.innerHeight
-    const maskUpdateIntervalSec = 0.05 // throttle expensive innerHTML updates
     const smoothstep = (edge0, edge1, x) => {
       const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)))
       return t * t * (3 - 2 * t)
     }
-    const cursorDamping = Math.min(0.25, Config.damping * 2.0) // more responsive than Config.damping
+    const cursorDamping = Math.min(0.25, Config.damping * 2.0)
 
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
@@ -297,8 +264,6 @@ function App() {
         bg.material.uniforms.uResolution.value.set(w, h)
         bg.material.uniforms.uAspect.value = a
 
-        maskWidth = w
-        maskHeight = h
         bloomPass.resolution.set(w * bloomScale, h * bloomScale)
       }
       window.addEventListener('resize', onResize)
@@ -376,13 +341,7 @@ function App() {
         bg.material.uniforms.uTime.value = time
         bg.material.uniforms.uMouse.value.copy(smoothedCursor)
         bg.material.uniforms.uVelocity.value = velocity
-        
-        // Update SVG mask
-        if (time - lastMaskUpdate >= maskUpdateIntervalSec) {
-          updateMask(history, maskWidth, maskHeight)
-          lastMaskUpdate = time
-        }
-        
+
         // Update 3D text - subtle rotation based on mouse position
         if (textMesh) {
           textMesh.rotation.x = smoothedCursor.y * 0.15
@@ -444,28 +403,13 @@ function App() {
       console.error(err)
       setError(err.message)
     }
-  }, [scene, camera, frustumSize, trail, bg, updateMask])
+  }, [scene, camera, frustumSize, trail, bg])
 
   return (
     <>
       <div ref={containerRef} style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1, background: '#888888' }} />
       <FluidCursor />
-      
-      {/* SVG Mask Layer - reveals black text */}
-      <svg 
-        ref={maskRef}
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-          zIndex: 3,
-          pointerEvents: 'none',
-          filter: 'blur(8px)'
-        }}
-      />
-      
+
       <div style={{
         position: 'fixed',
         top: 0,
