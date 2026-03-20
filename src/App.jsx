@@ -384,8 +384,10 @@ function App() {
       }
 
       const handleDoubleClick = () => {
-        isExplodedRef.current = false
-        isResettingRef.current = true
+        if (isExplodedRef.current) {
+          isExplodedRef.current = false
+          isResettingRef.current = true
+        }
       }
 
       window.addEventListener('mousedown', handleMouseDown)
