@@ -135,12 +135,12 @@ export const backgroundFragmentShader = `
       fbm(worldPos * 0.5 - mouseInfluence * 10.0 - time * 0.8)
     ) * 0.5 * (1.0 + mouseInfluence * 3.0);
     
-    // Colors
-    vec3 darkColor = vec3(0.015, 0.02, 0.035);
-    vec3 midColor = vec3(0.04, 0.08, 0.12);
-    vec3 accentColor = vec3(0.08, 0.25, 0.35);
-    vec3 highlightColor = vec3(0.15, 0.45, 0.6);
-    vec3 glowColor = vec3(0.25, 0.65, 0.85);
+    // Colors - sleek dark palette
+    vec3 darkColor = vec3(0.0, 0.0, 0.0);
+    vec3 midColor = vec3(0.005, 0.005, 0.005);
+    vec3 accentColor = vec3(0.01, 0.01, 0.01);
+    vec3 highlightColor = vec3(0.015, 0.015, 0.015);
+    vec3 glowColor = vec3(0.02, 0.02, 0.02);
     
     float noisePattern = fbm(distorted * 0.25 + time * 0.1);
     

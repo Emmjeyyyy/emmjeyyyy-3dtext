@@ -5,6 +5,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { FontLoader } from 'three/examples/jsm/loaders/FontLoader.js'
 import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js'
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { Config } from './config'
 import { particleVertexShader, particleFragmentShader } from './shaders'
 import { backgroundVertexShader, backgroundFragmentShader } from './shaders'
@@ -31,11 +32,45 @@ function createCircleTexture() {
   return new THREE.CanvasTexture(canvas)
 }
 
+// Create procedural environment texture for mirror reflections
+function createEnvironmentTexture() {
+  const size = 512
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')
+
+  // Sky to Ground gradient
+  const gradient = ctx.createLinearGradient(0, 0, 0, size)
+  gradient.addColorStop(0, '#02050a')      // Deep sky
+  gradient.addColorStop(0.48, '#152535')   // Horizon top
+  gradient.addColorStop(0.5, '#ffffff')    // Horizon line (sharp)
+  gradient.addColorStop(0.52, '#202530')   // Ground top
+  gradient.addColorStop(1, '#02050a')      // Deep ground
+  
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, size, size)
+  
+  // Add some "cloud" interest (subtle horizontal streaks)
+  for (let i = 0; i < 15; i++) {
+    const y = Math.random() * size
+    const h = Math.random() * 20 + 5
+    const alpha = Math.random() * 0.15 + 0.05
+    ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`
+    ctx.fillRect(0, y, size, h)
+  }
+
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.mapping = THREE.EquirectangularReflectionMapping
+  return texture
+}
+
 // ============================================
 // MAIN APP COMPONENT
 // ============================================
 function App() {
   const containerRef = useRef(null)
+  const textMeshRef = useRef(null)
   const [error, setError] = useState(null)
 
   // Initialize Three.js objects at component level
@@ -135,6 +170,8 @@ function App() {
 
   useEffect(() => {
     let renderer, composer
+    let isMounted = true
+    const envMap = createEnvironmentTexture()
     let smoothedCursor = new THREE.Vector2(0, 0)
     let lastSmoothedCursor = new THREE.Vector2(0, 0)
     let velocity = 0
@@ -150,7 +187,8 @@ function App() {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
       renderer.setSize(window.innerWidth, window.innerHeight)
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
-      renderer.setClearColor(0x888888, 1)
+      renderer.setClearColor(0x000000, 1)
+      renderer.setPixelRatio(window.devicePixelRatio)
       containerRef.current.appendChild(renderer.domElement)
 
       trail.material.uniforms.uPixelRatio.value = renderer.getPixelRatio()
@@ -166,44 +204,40 @@ function App() {
       )
       composer.addPass(bloomPass)
 
-      // Create premium iridescent material with soft, blurred reflections
-      const iridescentMaterial = new THREE.MeshPhysicalMaterial({
-        color: 0xe8f4ff,
-        metalness: 0.7,  // Lower for softer reflections
-        roughness: 0.35,  // Higher for more blurred/fuzzy highlights
-        clearcoat: 0.5,  // Less clearcoat for softer look
-        clearcoatRoughness: 0.4,
-        reflectivity: 0.5,
-        iridescence: 0.3,  // Very subtle iridescence
+      // Create premium mirror chrome material
+      const chromeMaterial = new THREE.MeshPhysicalMaterial({
+        color: 0xdddddd,
+        metalness: 1.0,  // Maximum reflectivity
+        roughness: 0.22,  // Softer highlights (blobs instead of particles)
+        envMap: envMap,
+        envMapIntensity: 1.2, // Balanced environment 
+        clearcoat: 1.0,  // Perfectly smooth outer layer
+        clearcoatRoughness: 0.1, // Softer clearcoat for integrated glints
+        reflectivity: 1.0,
+        iridescence: 0.1,  // Subtle hint
         iridescenceIOR: 1.3,
-        iridescenceThicknessRange: [300, 700],
-        sheen: 0.3,  // Subtle sheen
-        sheenRoughness: 0.5,  // Fuzzy sheen
-        sheenColor: new THREE.Color(0x88ccff),
-        emissive: 0x0a1520,
-        emissiveIntensity: 0.02
+        iridescenceThicknessRange: [100, 400],
+        sheen: 0,
+        emissive: 0x000000,
+        emissiveIntensity: 0
       })
 
-      // Add dynamic circular spot lights matching trail color (cyan/blue)
-      const keyLight = new THREE.PointLight(0x88ddff, 1.2, 15)  // Cyan - shorter range for circular falloff
-      keyLight.position.set(5, 5, 5)
+      // Add dynamic lights for soft specular glints
+      const keyLight = new THREE.PointLight(0x88ddff, 1.3, 30)
+      keyLight.position.set(5, 5, 10)
       scene.add(keyLight)
 
-      const fillLight = new THREE.PointLight(0x66bbff, 0.8, 12)  // Blue-cyan
-      fillLight.position.set(-5, 3, 3)
+      const fillLight = new THREE.PointLight(0x66bbff, 0.9, 25)
+      fillLight.position.set(-5, 3, 10)
       scene.add(fillLight)
 
-      const rimLight = new THREE.PointLight(0x99ccff, 1.0, 10)  // Light blue
-      rimLight.position.set(0, -3, 5)
+      const rimLight = new THREE.PointLight(0x99ccff, 1.1, 20)
+      rimLight.position.set(0, -3, 10)
       scene.add(rimLight)
 
       // Add ambient light for base illumination - subtle cyan tint
       const ambientLight = new THREE.AmbientLight(0x334455, 0.3)
       scene.add(ambientLight)
-
-      // Load font and create 3D text centered in scene
-      const fontLoader = new FontLoader()
-      let textMesh = null
 
       // Temp objects to avoid per-frame allocations
       const tmpColor = new THREE.Color()
@@ -212,25 +246,33 @@ function App() {
       const tmpLightColor2 = new THREE.Color()
       const tmpDeltaPos = new THREE.Vector2()
 
+      // Load font and create 3D text centered in scene
+      const fontLoader = new FontLoader()
+      
       fontLoader.load('https://threejs.org/examples/fonts/helvetiker_bold.typeface.json', (font) => {
-        const textGeo = new TextGeometry('EMMJEYYYY', {
+        if (!isMounted) return
+        
+        let textGeo = new TextGeometry('EMMJEYYYY', {
           font: font,
           size: 1.8,
           height: 0.5,
-          curveSegments: 16,
+          curveSegments: 32,
           bevelEnabled: true,
           bevelThickness: 0.1,
           bevelSize: 0.08,
           bevelOffset: 0,
-          bevelSegments: 12
+          bevelSegments: 18
         })
         
-        // Center the geometry
+        // Optimize geometry for smooth reflections
+        textGeo = BufferGeometryUtils.mergeVertices(textGeo, 0.001)
+        textGeo.computeVertexNormals()
         textGeo.center()
         
-        textMesh = new THREE.Mesh(textGeo, iridescentMaterial)
-        textMesh.position.set(0, 0, 1)  // Center in viewport
-        scene.add(textMesh)
+        const mesh = new THREE.Mesh(textGeo, chromeMaterial)
+        mesh.position.set(0, 0, 1)  // Center in viewport
+        scene.add(mesh)
+        textMeshRef.current = mesh
       })
 
       clock = new THREE.Clock()
@@ -343,15 +385,9 @@ function App() {
         bg.material.uniforms.uVelocity.value = velocity
 
         // Update 3D text - subtle rotation based on mouse position
-        if (textMesh) {
-          textMesh.rotation.x = smoothedCursor.y * 0.15
-          textMesh.rotation.y = smoothedCursor.x * 0.15
-
-          // Dynamic color matching trail
-          const trailHue = (Config.baseHue + time * 8) % 360
-          tmpTextColor.setHSL(trailHue / 360, 0.8, 0.6)
-          textMesh.material.emissive.copy(tmpTextColor).multiplyScalar(0.015 + velocity * 0.008)
-          textMesh.material.sheenColor.copy(tmpTextColor)
+        if (textMeshRef.current) {
+          textMeshRef.current.rotation.x = smoothedCursor.y * 0.15
+          textMeshRef.current.rotation.y = smoothedCursor.x * 0.15
         }
 
         // Update dynamic circular spot lights with color matching trail (dynamic hue)
@@ -384,9 +420,20 @@ function App() {
       animate()
 
       return () => {
+        isMounted = false
         if (animationId) cancelAnimationFrame(animationId)
         window.removeEventListener('mousemove', e => updateMouse(e.clientX, e.clientY))
         window.removeEventListener('resize', onResize)
+        
+        if (textMeshRef.current) {
+          scene.remove(textMeshRef.current)
+          if (textMeshRef.current.geometry) textMeshRef.current.geometry.dispose()
+          if (textMeshRef.current.material) textMeshRef.current.material.dispose()
+          textMeshRef.current = null
+        }
+        
+        envMap.dispose()
+        
         if (containerRef.current && renderer.domElement) {
           containerRef.current.removeChild(renderer.domElement)
         }
@@ -407,7 +454,7 @@ function App() {
 
   return (
     <>
-      <div ref={containerRef} style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1, background: '#888888' }} />
+      <div ref={containerRef} style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1, background: '#000000' }} />
       <FluidCursor />
 
       <div style={{
@@ -444,7 +491,7 @@ function App() {
           fontSize: 'clamp(0.8rem, 2vw, 1.1rem)',
           fontWeight: 400,
           letterSpacing: '0.6em',
-          color: '#000000',
+          color: '#ffffff',
           textTransform: 'uppercase'
         }}>
           Move your cursor
