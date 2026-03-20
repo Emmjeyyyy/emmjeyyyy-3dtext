@@ -2,7 +2,7 @@
 // CONFIGURATION
 // ============================================
 export const Config = {
-  trailLength: 80,
+  trailLength: 50,
   distortionStrength: 0.08,
   damping: 0.12,
   velocityMultiplier: 4.5,

@@ -911,38 +911,28 @@ const fluidCursor = () => {
 
   let lastUpdateTime = Date.now();
   let colorUpdateTimer = 0.0;
-  let lastSimFrameTime = 0;
-  const targetFrameMs = 1000 / 30; // throttle expensive sim work
+  let animationFrameId = null;
 
   // Start the animation loop immediately
   update();
 
   function update() {
-    const now = Date.now();
-
-    // Keep canvas sizing in sync even if we skip sim frames.
+    // Keep canvas sizing in sync
     if (resizeCanvas()) initFramebuffers();
 
-    // Throttle the heavy simulation steps to reduce jitter.
-    if (lastSimFrameTime && now - lastSimFrameTime < targetFrameMs) {
-      requestAnimationFrame(update);
-      return;
-    }
-    lastSimFrameTime = now;
-
     const dt = calcDeltaTime();
-    // console.log(dt)
     updateColors(dt);
     applyInputs();
     step(dt);
     render(null);
-    requestAnimationFrame(update);
+    
+    animationFrameId = requestAnimationFrame(update);
   }
 
   function calcDeltaTime() {
     let now = Date.now();
     let dt = (now - lastUpdateTime) / 1000;
-    dt = Math.min(dt, 0.016666);
+    dt = Math.min(Math.max(dt, 0.001), 0.016666); // Clamp between 1ms and 16.67ms (60fps)
     lastUpdateTime = now;
     return dt;
   }
@@ -963,7 +953,9 @@ const fluidCursor = () => {
     if (colorUpdateTimer >= 1) {
       colorUpdateTimer = wrap(colorUpdateTimer, 0, 1);
       pointers.forEach((p) => {
-        p.color = generateColor();
+        // Smooth color transition by blending with new color
+        const newColor = generateColor();
+        p.color = newColor;
       });
     }
   }
@@ -1165,7 +1157,6 @@ const fluidCursor = () => {
     let posY = scaleByPixelRatio(e.clientY);
     let color = generateColor();
 
-    update();
     updatePointerMoveData(pointer, posX, posY, color);
 
     // Remove this event listener after the first mousemove event
@@ -1191,7 +1182,6 @@ const fluidCursor = () => {
         let posX = scaleByPixelRatio(touches[i].clientX);
         let posY = scaleByPixelRatio(touches[i].clientY);
 
-        update();
         updatePointerDownData(pointer, touches[i].identifier, posX, posY);
       }
 
