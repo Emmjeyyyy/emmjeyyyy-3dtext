@@ -8,6 +8,7 @@ import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js'
 import { Config } from './config'
 import { particleVertexShader, particleFragmentShader } from './shaders'
 import { backgroundVertexShader, backgroundFragmentShader } from './shaders'
+import FluidCursor from './components/FluidCursor'
 
 // Create circular texture
 function createCircleTexture() {
@@ -168,11 +169,20 @@ function App() {
     let velocity = 0
     let animationId
     let clock
+    let lastMaskUpdate = 0
+    let maskWidth = window.innerWidth
+    let maskHeight = window.innerHeight
+    const maskUpdateIntervalSec = 0.05 // throttle expensive innerHTML updates
+    const smoothstep = (edge0, edge1, x) => {
+      const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)))
+      return t * t * (3 - 2 * t)
+    }
+    const cursorDamping = Math.min(0.25, Config.damping * 2.0) // more responsive than Config.damping
 
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
       renderer.setSize(window.innerWidth, window.innerHeight)
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
       renderer.setClearColor(0x888888, 1)
       containerRef.current.appendChild(renderer.domElement)
 
@@ -180,10 +190,14 @@ function App() {
 
       composer = new EffectComposer(renderer)
       composer.addPass(new RenderPass(scene, camera))
-      composer.addPass(new UnrealBloomPass(
-        new THREE.Vector2(window.innerWidth, window.innerHeight),
-        Config.bloomStrength, Config.bloomRadius, Config.bloomThreshold
-      ))
+      const bloomScale = 0.5 // lower internal bloom buffer cost
+      const bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth * bloomScale, window.innerHeight * bloomScale),
+        Config.bloomStrength,
+        Config.bloomRadius,
+        Config.bloomThreshold
+      )
+      composer.addPass(bloomPass)
 
       // Create premium iridescent material with soft, blurred reflections
       const iridescentMaterial = new THREE.MeshPhysicalMaterial({
@@ -222,6 +236,15 @@ function App() {
 
       // Load font and create 3D text centered in scene
       const fontLoader = new FontLoader()
+      let textMesh = null
+
+      // Temp objects to avoid per-frame allocations
+      const tmpColor = new THREE.Color()
+      const tmpTextColor = new THREE.Color()
+      const tmpLightColor = new THREE.Color()
+      const tmpLightColor2 = new THREE.Color()
+      const tmpDeltaPos = new THREE.Vector2()
+
       fontLoader.load('https://threejs.org/examples/fonts/helvetiker_bold.typeface.json', (font) => {
         const textGeo = new TextGeometry('EMMJEYYYY', {
           font: font,
@@ -238,7 +261,7 @@ function App() {
         // Center the geometry
         textGeo.center()
         
-        const textMesh = new THREE.Mesh(textGeo, iridescentMaterial)
+        textMesh = new THREE.Mesh(textGeo, iridescentMaterial)
         textMesh.position.set(0, 0, 1)  // Center in viewport
         scene.add(textMesh)
       })
@@ -270,9 +293,13 @@ function App() {
         
         bg.geometry.dispose()
         bg.geometry = new THREE.PlaneGeometry(fs * a * 2, fs * 2)
+        bg.mesh.geometry = bg.geometry
         bg.material.uniforms.uResolution.value.set(w, h)
         bg.material.uniforms.uAspect.value = a
-        composer.passes[1].resolution.set(w, h)
+
+        maskWidth = w
+        maskHeight = h
+        bloomPass.resolution.set(w * bloomScale, h * bloomScale)
       }
       window.addEventListener('resize', onResize)
 
@@ -284,18 +311,25 @@ function App() {
         const time = clock.getElapsedTime()
         
         lastSmoothedCursor.copy(smoothedCursor)
-        const lerpFactor = 1 - Math.pow(1 - Config.damping, delta * 60)
+        const lerpFactor = 1 - Math.pow(1 - cursorDamping, delta * 60)
         smoothedCursor.lerp(currentMouse, lerpFactor)
         
-        const deltaPos = smoothedCursor.clone().sub(lastSmoothedCursor)
-        velocity = Math.min(deltaPos.length() * Config.velocityMultiplier * 60, Config.maxVelocity)
+        tmpDeltaPos.copy(smoothedCursor).sub(lastSmoothedCursor)
+        velocity = Math.min(tmpDeltaPos.length() * Config.velocityMultiplier * 60, Config.maxVelocity)
         
         // Update trail history
         const history = trail.history
         for (let i = history.length - 1; i > 0; i--) {
-          history[i] = { ...history[i - 1] }
+          // Mutate existing objects to avoid GC churn.
+          history[i].x = history[i - 1].x
+          history[i].y = history[i - 1].y
+          history[i].velocity = history[i - 1].velocity
         }
-        history[0] = { x: smoothedCursor.x, y: smoothedCursor.y, velocity }
+        // Use the responsive smoothed cursor for the head to reduce micro-jitter
+        // while staying aligned to the fluid effect.
+        history[0].x = smoothedCursor.x
+        history[0].y = smoothedCursor.y
+        history[0].velocity = velocity
         
         const aspect = window.innerWidth / window.innerHeight
         const halfWidth = frustumSize * aspect / 2
@@ -321,18 +355,16 @@ function App() {
           sizeAttr.array[i] = baseSize * velocityBoost * ripple
           
           const ageFade = Math.pow(1 - t, 1.2)  // Smoother fade curve
-          const velocityThreshold = 1.5
-          const velocityFade = h.velocity < velocityThreshold 
-            ? 0 
-            : Math.min(Math.pow((h.velocity - velocityThreshold) * 0.08, 0.8), 1)  // Smoother velocity fade
+          const velocityThreshold = 1.2
+          // Smooth transition to avoid visible “on/off” popping (reads as jitter).
+          const velocityFade = Math.pow(smoothstep(velocityThreshold, velocityThreshold + 1.3, h.velocity), 0.85)
           alphaAttr.array[i] = ageFade * velocityFade * Config.particleOpacity * 1.2  // Slightly higher for glow
           
           const hue = (Config.baseHue + t * 25 + time * 8) % 360
-          const color = new THREE.Color()
-          color.setHSL(hue / 360, Config.saturation, Config.lightness)
-          colorAttr.array[i * 3] = color.r
-          colorAttr.array[i * 3 + 1] = color.g
-          colorAttr.array[i * 3 + 2] = color.b
+          tmpColor.setHSL(hue / 360, Config.saturation, Config.lightness)
+          colorAttr.array[i * 3] = tmpColor.r
+          colorAttr.array[i * 3 + 1] = tmpColor.g
+          colorAttr.array[i * 3 + 2] = tmpColor.b
         }
         
         posAttr.needsUpdate = true
@@ -346,49 +378,46 @@ function App() {
         bg.material.uniforms.uVelocity.value = velocity
         
         // Update SVG mask
-        updateMask(history, window.innerWidth, window.innerHeight)
+        if (time - lastMaskUpdate >= maskUpdateIntervalSec) {
+          updateMask(history, maskWidth, maskHeight)
+          lastMaskUpdate = time
+        }
         
         // Update 3D text - subtle rotation based on mouse position
-        scene.traverse((child) => {
-          if (child instanceof THREE.Mesh && child.geometry instanceof TextGeometry) {
-            child.rotation.x = smoothedCursor.y * 0.15
-            child.rotation.y = smoothedCursor.x * 0.15
-            // Dynamic color matching trail
-            const trailHue = (Config.baseHue + time * 8) % 360
-            const trailColor = new THREE.Color()
-            trailColor.setHSL(trailHue / 360, 0.8, 0.6)
-            child.material.emissive.copy(trailColor).multiplyScalar(0.015 + velocity * 0.008)
-            child.material.sheenColor.copy(trailColor)
-          }
-          // Update dynamic circular spot lights with color matching trail (dynamic hue)
-          if (child instanceof THREE.PointLight) {
-            // Calculate distance from center (where text is)
-            const distFromCenter = Math.sqrt(smoothedCursor.x * smoothedCursor.x + smoothedCursor.y * smoothedCursor.y)
-            const proximityFactor = Math.max(0, 1 - distFromCenter * 0.5)
-            
-            // Dynamic color matching trail - uses same hue calculation as particles
-            const trailHue = (Config.baseHue + time * 8) % 360
-            const trailColor = new THREE.Color()
-            trailColor.setHSL(trailHue / 360, 0.8, 0.7)
-            
-            if (child === keyLight) {
-              child.position.x = smoothedCursor.x * 8 + 5
-              child.position.y = smoothedCursor.y * 5 + 5
-              child.intensity = 0.3 + proximityFactor * 0.3  // Reduced intensity
-              child.color.copy(trailColor)
-            } else if (child === fillLight) {
-              child.position.x = smoothedCursor.x * 8 - 5
-              child.position.y = smoothedCursor.y * 5 + 3
-              child.intensity = 0.2 + proximityFactor * 0.2  // Reduced intensity
-              child.color.copy(trailColor).offsetHSL(0, -0.1, -0.1)
-            } else if (child === rimLight) {
-              child.position.x = smoothedCursor.x * 8
-              child.position.y = smoothedCursor.y * 5 - 3
-              child.intensity = 0.25 + proximityFactor * 0.25  // Reduced intensity
-              child.color.copy(trailColor).offsetHSL(0.02, 0.1, 0.1)
-            }
-          }
-        })
+        if (textMesh) {
+          textMesh.rotation.x = smoothedCursor.y * 0.15
+          textMesh.rotation.y = smoothedCursor.x * 0.15
+
+          // Dynamic color matching trail
+          const trailHue = (Config.baseHue + time * 8) % 360
+          tmpTextColor.setHSL(trailHue / 360, 0.8, 0.6)
+          textMesh.material.emissive.copy(tmpTextColor).multiplyScalar(0.015 + velocity * 0.008)
+          textMesh.material.sheenColor.copy(tmpTextColor)
+        }
+
+        // Update dynamic circular spot lights with color matching trail (dynamic hue)
+        // Calculate distance from center (where text is)
+        const distFromCenter = Math.sqrt(smoothedCursor.x * smoothedCursor.x + smoothedCursor.y * smoothedCursor.y)
+        const proximityFactor = Math.max(0, 1 - distFromCenter * 0.5)
+        const trailHue = (Config.baseHue + time * 8) % 360
+        tmpLightColor.setHSL(trailHue / 360, 0.8, 0.7)
+
+        keyLight.position.x = smoothedCursor.x * 8 + 5
+        keyLight.position.y = smoothedCursor.y * 5 + 5
+        keyLight.intensity = 0.3 + proximityFactor * 0.3
+        keyLight.color.copy(tmpLightColor)
+
+        fillLight.position.x = smoothedCursor.x * 8 - 5
+        fillLight.position.y = smoothedCursor.y * 5 + 3
+        fillLight.intensity = 0.2 + proximityFactor * 0.2
+        tmpLightColor2.copy(tmpLightColor).offsetHSL(0, -0.1, -0.1)
+        fillLight.color.copy(tmpLightColor2)
+
+        rimLight.position.x = smoothedCursor.x * 8
+        rimLight.position.y = smoothedCursor.y * 5 - 3
+        rimLight.intensity = 0.25 + proximityFactor * 0.25
+        tmpLightColor2.copy(tmpLightColor).offsetHSL(0.02, 0.1, 0.1)
+        rimLight.color.copy(tmpLightColor2)
         
         composer.render()
       }
@@ -420,6 +449,7 @@ function App() {
   return (
     <>
       <div ref={containerRef} style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1, background: '#888888' }} />
+      <FluidCursor />
       
       {/* SVG Mask Layer - reveals black text */}
       <svg 
