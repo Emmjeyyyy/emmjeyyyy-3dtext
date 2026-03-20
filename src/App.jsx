@@ -180,6 +180,9 @@ function App() {
     let velocity = 0
     let animationId
     let clock
+    const raycaster = new THREE.Raycaster()
+    const mouse = new THREE.Vector2()
+    let isHovered = false
     const smoothstep = (edge0, edge1, x) => {
       const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)))
       return t * t * (3 - 2 * t)
@@ -221,8 +224,9 @@ function App() {
         iridescenceIOR: 1.3,
         iridescenceThicknessRange: [100, 400],
         sheen: 0,
-        emissive: 0x000000,
-        emissiveIntensity: 0
+        emissive: 0x4488ff,
+        emissiveIntensity: 0,
+        side: THREE.DoubleSide
       })
 
       // Add dynamic lights for soft specular glints
@@ -272,9 +276,36 @@ function App() {
           bevelSegments: 18
         }
 
-        const letterGap = Config.textSpacing || 0.4
+        const letterGap = Config.textSpacing || 0.1
         let totalWidth = 0
         const charData = []
+
+        // Helper to define better collision shapes for each letter (composite spheres)
+        const getColliders = (char, width, height) => {
+          const colliders = []
+          const r = width * 0.28 // sphere radius
+          
+          if (char === 'M' || char === 'E' || char === 'W') {
+            // 3-point wide letters
+            colliders.push({ offset: new THREE.Vector3(-width * 0.3, 0, 0), r })
+            colliders.push({ offset: new THREE.Vector3(0, 0, 0), r })
+            colliders.push({ offset: new THREE.Vector3(width * 0.3, 0, 0), r })
+          } else if (char === 'Y') {
+            // Y shape
+            colliders.push({ offset: new THREE.Vector3(-width * 0.3, height * 0.3, 0), r })
+            colliders.push({ offset: new THREE.Vector3(width * 0.3, height * 0.3, 0), r })
+            colliders.push({ offset: new THREE.Vector3(0, -height * 0.2, 0), r })
+          } else if (char === 'J') {
+            // J shape
+            colliders.push({ offset: new THREE.Vector3(width * 0.1, height * 0.2, 0), r })
+            colliders.push({ offset: new THREE.Vector3(-width * 0.1, -height * 0.2, 0), r })
+          } else {
+            // Default 2 points (top/bottom)
+            colliders.push({ offset: new THREE.Vector3(0, height * 0.25, 0), r })
+            colliders.push({ offset: new THREE.Vector3(0, -height * 0.25, 0), r })
+          }
+          return colliders
+        }
 
         // First pass: create geometries and measure widths
         chars.forEach((char) => {
@@ -282,9 +313,10 @@ function App() {
           charGeo = BufferGeometryUtils.mergeVertices(charGeo, 0.001)
           charGeo.computeVertexNormals()
           charGeo.computeBoundingBox()
-
+          
           const width = charGeo.boundingBox.max.x - charGeo.boundingBox.min.x
-          charData.push({ char, geo: charGeo, width })
+          const height = charGeo.boundingBox.max.y - charGeo.boundingBox.min.y
+          charData.push({ char, geo: charGeo, width, height })
           totalWidth += width + letterGap
         })
         totalWidth -= letterGap // remove last gap
@@ -292,27 +324,27 @@ function App() {
         // Second pass: position and create meshes
         let currentX = -totalWidth / 2
         charData.forEach((data, i) => {
-          const { geo, width } = data
+          const { char, geo, width, height } = data
           geo.center() // center for better rotation
-
+          
           const mesh = new THREE.Mesh(geo, chromeMaterial)
           // Position based on accumulated width
           const posX = currentX + width / 2
           mesh.position.set(posX, 0, 1)
           currentX += width + letterGap
-
+          
           scene.add(mesh)
-
-          geo.computeBoundingSphere()
-          const radius = geo.boundingSphere.radius * 0.85
-
+          
+          const colliders = getColliders(char, width, height)
+          
           meshes.push({
             mesh,
             originalPos: mesh.position.clone(),
             originalRot: mesh.rotation.clone(),
             velocity: new THREE.Vector3(),
             angularVelocity: new THREE.Vector3(),
-            radius
+            colliders,
+            width, height
           })
         })
 
@@ -334,7 +366,7 @@ function App() {
 
       // Click to scatter / Double-click to reset
       const handleMouseDown = () => {
-        if (!isExplodedRef.current && !isResettingRef.current) {
+        if (!isExplodedRef.current && !isResettingRef.current && isHovered) {
           isExplodedRef.current = true
           letterMeshesRef.current.forEach(item => {
             item.velocity.set(
@@ -343,9 +375,9 @@ function App() {
               (Math.random() - 0.5) * 10
             )
             item.angularVelocity.set(
-              (Math.random() - 0.5) * 0.2,
-              (Math.random() - 0.5) * 0.2,
-              (Math.random() - 0.5) * 0.2
+              (Math.random() - 0.5) * 0.05,
+              (Math.random() - 0.5) * 0.05,
+              (Math.random() - 0.5) * 0.05
             )
           })
         }
@@ -388,6 +420,20 @@ function App() {
         const dt = clock.getDelta() // Raw delta time for physics
         const delta = Math.min(dt, 0.1) // Capped delta time for smoothing
         const time = clock.getElapsedTime()
+
+        // Update raycaster for hover detection
+        raycaster.setFromCamera(currentMouse, camera)
+        const intersects = raycaster.intersectObjects(letterMeshesRef.current.map(l => l.mesh))
+        isHovered = intersects.length > 0 && !isExplodedRef.current && !isResettingRef.current
+
+        // Visual feedback for hover
+        if (isHovered) {
+          document.body.style.cursor = 'pointer'
+          chromeMaterial.emissiveIntensity = THREE.MathUtils.lerp(chromeMaterial.emissiveIntensity, 0.5, 0.1)
+        } else {
+          document.body.style.cursor = 'default'
+          chromeMaterial.emissiveIntensity = THREE.MathUtils.lerp(chromeMaterial.emissiveIntensity, 0, 0.1)
+        }
 
         lastSmoothedCursor.copy(smoothedCursor)
         const lerpFactor = 1 - Math.pow(1 - cursorDamping, dt * 60)
@@ -461,12 +507,12 @@ function App() {
         const repulsionStrength = 0.5
 
         letterMeshesRef.current.forEach((item, index) => {
-          const { mesh, velocity, angularVelocity, originalPos, originalRot, radius } = item
+          const { mesh, velocity, angularVelocity, originalPos, originalRot, colliders, width, height } = item
 
           if (isExplodedRef.current) {
-            // Apply velocity damping
+            // Apply velocity damping for a more lifelike "air resistance" feel
             velocity.multiplyScalar(0.99)
-            angularVelocity.multiplyScalar(0.99)
+            angularVelocity.multiplyScalar(0.94)
 
             // Update position and rotation
             mesh.position.add(velocity.clone().multiplyScalar(dt))
@@ -474,18 +520,24 @@ function App() {
             mesh.rotation.y += angularVelocity.y
             mesh.rotation.z += angularVelocity.z
 
-            // Boundary checks (edges)
-            if (Math.abs(mesh.position.x) > hw - radius) {
-              velocity.x *= -0.8
-              mesh.position.x = Math.sign(mesh.position.x) * (hw - radius)
+            // Boundary checks with subtle torque
+            const mainR = width * 0.5
+            if (Math.abs(mesh.position.x) > hw - mainR) {
+              velocity.x *= -0.75
+              mesh.position.x = Math.sign(mesh.position.x) * (hw - mainR)
+              // Induced spin from off-center boundary hit - ultra-subdued
+              angularVelocity.y += (Math.random() - 0.5) * velocity.x * 0.02
+              angularVelocity.z += (Math.random() - 0.5) * velocity.x * 0.01
             }
-            if (Math.abs(mesh.position.y) > hh - radius) {
-              velocity.y *= -0.8
-              mesh.position.y = Math.sign(mesh.position.y) * (hh - radius)
+            if (Math.abs(mesh.position.y) > hh - mainR) {
+              velocity.y *= -0.75
+              mesh.position.y = Math.sign(mesh.position.y) * (hh - mainR)
+              angularVelocity.x += (Math.random() - 0.5) * velocity.y * 0.02
+              angularVelocity.z += (Math.random() - 0.5) * velocity.y * 0.01
             }
-            if (Math.abs(mesh.position.z) > 10) {
+            if (Math.abs(mesh.position.z) > 4) {
               velocity.z *= -0.8
-              mesh.position.z = Math.sign(mesh.position.z) * 10
+              mesh.position.z = Math.sign(mesh.position.z) * 4
             }
 
             // Mouse proximity repulsion
@@ -497,23 +549,44 @@ function App() {
               velocity.y += tmpDeltaPos.y * force
             }
 
-            // Simple Circle-Circle Collision between letters
+            // Advanced Multi-Sphere Collision resolution with Torque
             for (let j = index + 1; j < letterMeshesRef.current.length; j++) {
               const other = letterMeshesRef.current[j]
-              const diff = mesh.position.clone().sub(other.mesh.position)
-              const minDist = radius + other.radius
-              if (diff.length() < minDist) {
-                // Resolve overlap
-                const overlap = minDist - diff.length()
-                const resolveVec = diff.normalize().multiplyScalar(overlap * 0.5)
-                mesh.position.add(resolveVec)
-                other.mesh.position.sub(resolveVec)
+              
+              // Check every collider pair between the two characters
+              colliders.forEach(c1 => {
+                const worldC1 = c1.offset.clone().applyQuaternion(mesh.quaternion).add(mesh.position)
+                
+                other.colliders.forEach(c2 => {
+                  const worldC2 = c2.offset.clone().applyQuaternion(other.mesh.quaternion).add(other.mesh.position)
+                  const diff = worldC1.clone().sub(worldC2)
+                  const minDist = c1.r + c2.r
+                  
+                  if (diff.length() < minDist) {
+                    const normal = diff.normalize()
+                    const overlap = minDist - diff.length()
+                    
+                    // Resolve overlap - push meshes apart
+                    const resolveVec = normal.clone().multiplyScalar(overlap * 0.5)
+                    mesh.position.add(resolveVec)
+                    other.mesh.position.sub(resolveVec)
 
-                // Elastic collision (swap velocities roughly)
-                const tempVel = velocity.clone()
-                velocity.copy(other.velocity).multiplyScalar(0.8)
-                other.velocity.copy(tempVel).multiplyScalar(0.8)
-              }
+                    // Transfer impulse based on the hit point
+                    const impulse = normal.clone().multiplyScalar(velocity.clone().sub(other.velocity).length() * 0.35 + 0.05)
+                    
+                    // Linear velocity change
+                    velocity.add(impulse)
+                    other.velocity.sub(impulse)
+                    
+                    // Apply Torque (Angular Impulse) - ultra-subdued for a weighted feel
+                    const torque1 = c1.offset.clone().cross(impulse).multiplyScalar(0.03)
+                    const torque2 = c2.offset.clone().cross(impulse.clone().negate()).multiplyScalar(0.03)
+                    
+                    angularVelocity.add(torque1)
+                    other.angularVelocity.add(torque2)
+                  }
+                })
+              })
             }
           } else if (isResettingRef.current) {
             // Smoothly return to original layout
