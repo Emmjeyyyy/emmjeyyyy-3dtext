@@ -40,24 +40,34 @@ function createEnvironmentTexture() {
   canvas.height = size
   const ctx = canvas.getContext('2d')
 
-  // Sky to Ground gradient
+  // Create a deep contrasty space-like background
   const gradient = ctx.createLinearGradient(0, 0, 0, size)
-  gradient.addColorStop(0, '#02050a')      // Deep sky
-  gradient.addColorStop(0.48, '#152535')   // Horizon top
-  gradient.addColorStop(0.5, '#ffffff')    // Horizon line (sharp)
-  gradient.addColorStop(0.52, '#202530')   // Ground top
-  gradient.addColorStop(1, '#02050a')      // Deep ground
+  gradient.addColorStop(0, '#020205')      // Darker sky
+  gradient.addColorStop(0.49, '#101520')   // Near horizon
+  gradient.addColorStop(0.5, '#ffffff')    // Sharp horizon white
+  gradient.addColorStop(0.51, '#151520')   // Near ground
+  gradient.addColorStop(1, '#000000')      // Dark ground
 
   ctx.fillStyle = gradient
   ctx.fillRect(0, 0, size, size)
 
-  // Add some "cloud" interest (subtle horizontal streaks)
-  for (let i = 0; i < 15; i++) {
-    const y = Math.random() * size
-    const h = Math.random() * 20 + 5
-    const alpha = Math.random() * 0.15 + 0.05
+  // Add high-contrast "studio light" streaks for crisp reflections
+  // Horizontal streaks represent overhead lights
+  for (let i = 0; i < 8; i++) {
+    const y = Math.random() * size * 0.4 // Mostly in the top half
+    const h = Math.random() * 30 + 10
+    const alpha = Math.random() * 0.7 + 0.3 // Brighter streaks
     ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`
     ctx.fillRect(0, y, size, h)
+  }
+
+  // A couple of very bright, thin vertical lines for highlights on curves
+  for (let i = 0; i < 3; i++) {
+    const x = Math.random() * size
+    const w = Math.random() * 10 + 2
+    const alpha = Math.random() * 0.5 + 0.3
+    ctx.fillStyle = `rgba(220, 235, 255, ${alpha})`
+    ctx.fillRect(x, 0, w, size)
   }
 
   const texture = new THREE.CanvasTexture(canvas)
@@ -191,10 +201,12 @@ function App() {
 
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
-      renderer.setSize(window.innerWidth, window.innerHeight)
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
+      renderer.setSize(window.innerWidth, window.innerHeight)
       renderer.setClearColor(0x000000, 1)
-      renderer.setPixelRatio(window.devicePixelRatio)
+      renderer.toneMapping = THREE.ACESFilmicToneMapping // Cinematic contrast
+      renderer.toneMappingExposure = 0.85 // Clamp peak brightness
+      renderer.outputColorSpace = THREE.SRGBColorSpace
       containerRef.current.appendChild(renderer.domElement)
 
       trail.material.uniforms.uPixelRatio.value = renderer.getPixelRatio()
@@ -212,38 +224,39 @@ function App() {
 
       // Create premium mirror chrome material
       const chromeMaterial = new THREE.MeshPhysicalMaterial({
-        color: 0xdddddd,
-        metalness: 1.0,  // Maximum reflectivity
-        roughness: 0.22,  // Softer highlights (blobs instead of particles)
+        color: 0xbbbbbb,          // Deeper base to catch more environment detail
+        metalness: 1.0,           // Maximum reflectivity
+        roughness: 0.18,          // Softer, more balanced light spread
         envMap: envMap,
-        envMapIntensity: 1.2, // Balanced environment 
-        clearcoat: 1.0,  // Perfectly smooth outer layer
-        clearcoatRoughness: 0.1, // Softer clearcoat for integrated glints
+        envMapIntensity: 1.6,     // Soft, balanced reflections (prev: 3.2)
+        clearcoat: 1.0,           // Perfectly smooth outer layer
+        clearcoatRoughness: 0.1,  // Balanced glint softness
         reflectivity: 1.0,
-        iridescence: 0.1,  // Subtle hint
-        iridescenceIOR: 1.3,
+        iridescence: 0.1,
+        iridescenceIOR: 1.5,
         iridescenceThicknessRange: [100, 400],
-        sheen: 0,
-        emissive: 0x4488ff,
-        emissiveIntensity: 0,
+        specularIntensity: 1.2,
+        specularColor: 0xffffff,
+        emissive: 0xbbddff,       // Faint cyan tint
+        emissiveIntensity: 0,     
         side: THREE.DoubleSide
       })
 
-      // Add dynamic lights for soft specular glints
-      const keyLight = new THREE.PointLight(0x88ddff, 1.3, 30)
+      // Add dynamic lights with softened intensities for a balanced appearance
+      const keyLight = new THREE.PointLight(0xffffff, 0.9, 40)
       keyLight.position.set(5, 5, 10)
       scene.add(keyLight)
 
-      const fillLight = new THREE.PointLight(0x66bbff, 0.9, 25)
+      const fillLight = new THREE.PointLight(0xddeeff, 0.7, 30)
       fillLight.position.set(-5, 3, 10)
       scene.add(fillLight)
 
-      const rimLight = new THREE.PointLight(0x99ccff, 1.1, 20)
+      const rimLight = new THREE.PointLight(0xffffff, 0.6, 25)
       rimLight.position.set(0, -3, 10)
       scene.add(rimLight)
 
-      // Add ambient light for base illumination - subtle cyan tint
-      const ambientLight = new THREE.AmbientLight(0x334455, 0.3)
+      // Add ambient light for smooth base illumination
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.25)
       scene.add(ambientLight)
 
       // Temp objects to avoid per-frame allocations
@@ -267,13 +280,13 @@ function App() {
         const textOptions = {
           font: font,
           size: 1.8,
-          height: 0.5,
-          curveSegments: 32,
+          height: 0.4,
+          curveSegments: 64, // Smoother curves
           bevelEnabled: true,
-          bevelThickness: 0.1,
-          bevelSize: 0.08,
+          bevelThickness: 0.18, // Thicker bevel to catch more light
+          bevelSize: 0.07,
           bevelOffset: 0,
-          bevelSegments: 18
+          bevelSegments: 32 // Ultra-smooth bevels
         }
 
         const letterGap = Config.textSpacing || 0.1
@@ -431,7 +444,7 @@ function App() {
         // Visual feedback for hover
         if (isHovered) {
           document.body.style.cursor = 'pointer'
-          chromeMaterial.emissiveIntensity = THREE.MathUtils.lerp(chromeMaterial.emissiveIntensity, 0.5, 0.1)
+          chromeMaterial.emissiveIntensity = THREE.MathUtils.lerp(chromeMaterial.emissiveIntensity, 0.15, 0.1) // Subdued glow
         } else {
           document.body.style.cursor = 'default'
           chromeMaterial.emissiveIntensity = THREE.MathUtils.lerp(chromeMaterial.emissiveIntensity, 0, 0.1)

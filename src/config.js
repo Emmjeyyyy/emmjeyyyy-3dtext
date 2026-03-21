@@ -12,8 +12,8 @@ export const Config = {
   baseHue: 195,  // Cyan/blue - matches trail color
   saturation: 0.75,
   lightness: 0.55,
-  bloomStrength: 1.4,
-  bloomRadius: 1.2,
-  bloomThreshold: 0.85,
+  bloomStrength: 0.75,
+  bloomRadius: 1.0,
+  bloomThreshold: 0.88,
   textSpacing: 0.1  // Adjust this to change the gap between 3D letters
 }
