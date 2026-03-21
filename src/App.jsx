@@ -84,6 +84,8 @@ function App() {
   const letterMeshesRef = useRef([])
   const isExplodedRef = useRef(false)
   const isResettingRef = useRef(false)
+  const isMouseDownRef = useRef(false)
+  const isAttractingRef = useRef(false)
   const [error, setError] = useState(null)
 
   // Initialize Three.js objects at component level
@@ -198,6 +200,7 @@ function App() {
       return t * t * (3 - 2 * t)
     }
     const cursorDamping = Config.damping * 3.5 // SNR = Snappy Response!
+    let hw = 0, hh = 0
 
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
@@ -377,8 +380,11 @@ function App() {
       window.addEventListener('touchmove', e => e.touches[0] && updateMouse(e.touches[0].clientX, e.touches[0].clientY))
       window.addEventListener('touchstart', e => e.touches[0] && updateMouse(e.touches[0].clientX, e.touches[0].clientY))
 
-      // Click to scatter / Double-click to reset
-      const handleMouseDown = () => {
+      // Click to scatter / Double-click to reset / Hold to attract
+      const handleMouseDown = (e) => {
+        if (e.button !== 0) return // Only left click
+        isMouseDownRef.current = true
+        
         if (!isExplodedRef.current && !isResettingRef.current && isHovered) {
           isExplodedRef.current = true
           letterMeshesRef.current.forEach(item => {
@@ -393,7 +399,36 @@ function App() {
               (Math.random() - 0.5) * 0.05
             )
           })
+        } else if (isExplodedRef.current) {
+          isAttractingRef.current = true
         }
+      }
+
+      const handleMouseUp = (e) => {
+        if (e.button !== 0) return // Only left click release
+        if (isAttractingRef.current) {
+          // Explosive scatter back naturally
+          const explosionStrength = 18
+          const mouseWorld = new THREE.Vector3(currentMouse.x * hw, currentMouse.y * hh, 1)
+          
+          letterMeshesRef.current.forEach(item => {
+            const dir = item.mesh.position.clone().sub(mouseWorld).normalize()
+            // Add some randomness to the direction
+            dir.x += (Math.random() - 0.5) * 0.4
+            dir.y += (Math.random() - 0.5) * 0.4
+            dir.z += (Math.random() - 0.5) * 0.4
+            dir.normalize()
+            
+            item.velocity.add(dir.multiplyScalar(explosionStrength + Math.random() * 8))
+            item.angularVelocity.add(new THREE.Vector3(
+              (Math.random() - 0.5) * 0.1,
+              (Math.random() - 0.5) * 0.1,
+              (Math.random() - 0.5) * 0.1
+            ))
+          })
+          isAttractingRef.current = false
+        }
+        isMouseDownRef.current = false
       }
 
       const handleDoubleClick = () => {
@@ -404,28 +439,33 @@ function App() {
       }
 
       window.addEventListener('mousedown', handleMouseDown)
+      window.addEventListener('mouseup', handleMouseUp)
       window.addEventListener('dblclick', handleDoubleClick)
 
       // Resize handler
       const onResize = () => {
         const w = window.innerWidth, h = window.innerHeight, a = w / h
         const fs = frustumSize
-        camera.left = -fs * a / 2
-        camera.right = fs * a / 2
-        camera.top = fs / 2
-        camera.bottom = -fs / 2
+        hw = fs * a / 2
+        hh = fs / 2
+        
+        camera.left = -hw
+        camera.right = hw
+        camera.top = hh
+        camera.bottom = -hh
         camera.updateProjectionMatrix()
         renderer.setSize(w, h)
         composer.setSize(w, h)
 
         bg.geometry.dispose()
-        bg.geometry = new THREE.PlaneGeometry(fs * a * 2, fs * 2)
+        bg.geometry = new THREE.PlaneGeometry(hw * 4, hh * 4)
         bg.mesh.geometry = bg.geometry
         bg.material.uniforms.uResolution.value.set(w, h)
         bg.material.uniforms.uAspect.value = a
 
         bloomPass.resolution.set(w * bloomScale, h * bloomScale)
       }
+      onResize() // Initial calculation
       window.addEventListener('resize', onResize)
 
       // Animation loop
@@ -441,8 +481,11 @@ function App() {
         const intersects = raycaster.intersectObjects(letterMeshesRef.current.map(l => l.mesh))
         isHovered = intersects.length > 0 && !isExplodedRef.current && !isResettingRef.current
 
-        // Visual feedback for hover
-        if (isHovered) {
+        // Visual feedback for hover or Black Hole
+        if (isAttractingRef.current) {
+          document.body.style.cursor = 'crosshair'
+          chromeMaterial.emissiveIntensity = THREE.MathUtils.lerp(chromeMaterial.emissiveIntensity, 0.8, 0.1)
+        } else if (isHovered) {
           document.body.style.cursor = 'pointer'
           chromeMaterial.emissiveIntensity = THREE.MathUtils.lerp(chromeMaterial.emissiveIntensity, 0.15, 0.1) // Subdued glow
         } else {
@@ -471,10 +514,7 @@ function App() {
         history[0].y = smoothedCursor.y
         history[0].velocity = velocity
 
-        const aspect = window.innerWidth / window.innerHeight
-        const hw = frustumSize * aspect / 2
-        const hh = frustumSize / 2
-
+        // Update trail history
         const posAttr = trail.points.geometry.getAttribute('position')
         const sizeAttr = trail.points.geometry.getAttribute('size')
         const alphaAttr = trail.points.geometry.getAttribute('alpha')
@@ -555,10 +595,26 @@ function App() {
               mesh.position.z = Math.sign(mesh.position.z) * 4
             }
 
-            // Mouse proximity repulsion
-            tmpDeltaPos.set(mesh.position.x - currentMouse.x * hw, mesh.position.y - currentMouse.y * hh)
+            // Mouse proximity repulsion OR Black Hole Attraction
+            const mouseWorld = new THREE.Vector2(currentMouse.x * hw, currentMouse.y * hh)
+            tmpDeltaPos.set(mesh.position.x - mouseWorld.x, mesh.position.y - mouseWorld.y)
             const distToMouse = tmpDeltaPos.length()
-            if (distToMouse < repulsionRadius) {
+
+            if (isAttractingRef.current) {
+              // Black Hole Logic: Pull toward cursor
+              const attractionStrength = 1.2
+              const pull = tmpDeltaPos.clone().normalize().multiplyScalar(-attractionStrength)
+              velocity.add(new THREE.Vector3(pull.x, pull.y, 0))
+              
+              // Add orbit/swirl effect as they get closer
+              const swirlStrength = 0.4
+              const swirl = new THREE.Vector3(-pull.y, pull.x, 0).multiplyScalar(swirlStrength)
+              velocity.add(swirl)
+              
+              // Extra damping when locked in the black hole
+              velocity.multiplyScalar(0.95)
+              angularVelocity.multiplyScalar(0.9)
+            } else if (distToMouse < repulsionRadius) {
               const force = (1.0 - distToMouse / repulsionRadius) * repulsionStrength
               velocity.x += tmpDeltaPos.x * force
               velocity.y += tmpDeltaPos.y * force
@@ -667,6 +723,7 @@ function App() {
         letterMeshesRef.current = []
 
         window.removeEventListener('mousedown', handleMouseDown)
+        window.removeEventListener('mouseup', handleMouseUp)
         window.removeEventListener('dblclick', handleDoubleClick)
 
         envMap.dispose()
