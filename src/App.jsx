@@ -61,14 +61,14 @@ function createEnvironmentTexture() {
     ctx.fillRect(0, y, size, h)
   }
 
-  // A couple of very bright, thin vertical lines for highlights on curves
-  for (let i = 0; i < 3; i++) {
-    const x = Math.random() * size
-    const w = Math.random() * 10 + 2
-    const alpha = Math.random() * 0.5 + 0.3
-    ctx.fillStyle = `rgba(220, 235, 255, ${alpha})`
-    ctx.fillRect(x, 0, w, size)
-  }
+    // A couple of very bright, thin vertical lines for highlights on curves
+    for (let i = 0; i < 3; i++) {
+      const x = Math.random() * size
+      const w = Math.random() * 10 + 2
+      const alpha = Math.random() * 0.5 + 0.3
+      ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`
+      ctx.fillRect(x, 0, w, size)
+    }
 
   const texture = new THREE.CanvasTexture(canvas)
   texture.mapping = THREE.EquirectangularReflectionMapping
@@ -237,12 +237,9 @@ function App() {
         clearcoat: 1.0,           // Perfectly smooth outer layer
         clearcoatRoughness: 0.1,  // Balanced glint softness
         reflectivity: 1.0,
-        iridescence: 0.1,
-        iridescenceIOR: 1.5,
-        iridescenceThicknessRange: [100, 400],
         specularIntensity: 1.2,
         specularColor: 0xffffff,
-        emissive: 0xbbddff,       // Faint cyan tint
+        emissive: 0xffffff,       // Pure white glow
         emissiveIntensity: 0,     
         side: THREE.DoubleSide
       })
@@ -685,29 +682,25 @@ function App() {
           }
         })
 
-        // Update dynamic circular spot lights with color matching trail (dynamic hue)
-        // Calculate distance from center (where text is)
+        // Update dynamic circular spot lights
+        // Calculate distance from center (where text is) for subtle intensity pulse
         const distFromCenter = Math.sqrt(smoothedCursor.x * smoothedCursor.x + smoothedCursor.y * smoothedCursor.y)
         const proximityFactor = Math.max(0, 1 - distFromCenter * 0.5)
-        const trailHue = (Config.baseHue + time * 8) % 360
-        tmpLightColor.setHSL(trailHue / 360, 0.8, 0.7)
 
         keyLight.position.x = smoothedCursor.x * 8 + 5
         keyLight.position.y = smoothedCursor.y * 5 + 5
         keyLight.intensity = 0.3 + proximityFactor * 0.3
-        keyLight.color.copy(tmpLightColor)
+        keyLight.color.set(0xffffff)
 
         fillLight.position.x = smoothedCursor.x * 8 - 5
         fillLight.position.y = smoothedCursor.y * 5 + 3
         fillLight.intensity = 0.2 + proximityFactor * 0.2
-        tmpLightColor2.copy(tmpLightColor).offsetHSL(0, -0.1, -0.1)
-        fillLight.color.copy(tmpLightColor2)
+        fillLight.color.set(0xf0f0f0)
 
         rimLight.position.x = smoothedCursor.x * 8
         rimLight.position.y = smoothedCursor.y * 5 - 3
         rimLight.intensity = 0.25 + proximityFactor * 0.25
-        tmpLightColor2.copy(tmpLightColor).offsetHSL(0.02, 0.1, 0.1)
-        rimLight.color.copy(tmpLightColor2)
+        rimLight.color.set(0xffffff)
 
         composer.render()
       }
