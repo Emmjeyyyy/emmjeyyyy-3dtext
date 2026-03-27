@@ -147,7 +147,9 @@ function App() {
 
     const trailPoints = new THREE.Points(trailGeom, trailMat)
     trailPoints.position.z = 6  // Render in front of text (z=1)
-    s.add(trailPoints)
+    if (Config.enableTrail) {
+      s.add(trailPoints)
+    }
 
     // Create background
     const bgGeom = new THREE.PlaneGeometry(frustum * aspect * 2, frustum * 2)
@@ -514,43 +516,45 @@ function App() {
         history[0].y = smoothedCursor.y
         history[0].velocity = velocity
 
-        // Update trail history
-        const posAttr = trail.points.geometry.getAttribute('position')
-        const sizeAttr = trail.points.geometry.getAttribute('size')
-        const alphaAttr = trail.points.geometry.getAttribute('alpha')
-        const colorAttr = trail.points.geometry.getAttribute('color')
+        if (Config.enableTrail) {
+          // Update trail history
+          const posAttr = trail.points.geometry.getAttribute('position')
+          const sizeAttr = trail.points.geometry.getAttribute('size')
+          const alphaAttr = trail.points.geometry.getAttribute('alpha')
+          const colorAttr = trail.points.geometry.getAttribute('color')
 
-        for (let i = 0; i < Config.trailLength; i++) {
-          const h = history[i]
-          const t = i / Config.trailLength
+          for (let i = 0; i < Config.trailLength; i++) {
+            const h = history[i]
+            const t = i / Config.trailLength
 
-          posAttr.array[i * 3] = h.x * hw
-          posAttr.array[i * 3 + 1] = h.y * hh
-          posAttr.array[i * 3 + 2] = 2  // Offset for front rendering
+            posAttr.array[i * 3] = h.x * hw
+            posAttr.array[i * 3 + 1] = h.y * hh
+            posAttr.array[i * 3 + 2] = 2  // Offset for front rendering
 
-          const baseSize = Config.particleSize * (1 - t * 0.85)
-          const velocityBoost = 1 + h.velocity * 0.12
-          // Add ripple effect - pulsing size based on time and particle age
-          const ripple = 1 + Math.sin(time * 8 + t * 10) * 0.3 * (1 - t)
-          sizeAttr.array[i] = baseSize * velocityBoost * ripple
+            const baseSize = Config.particleSize * (1 - t * 0.85)
+            const velocityBoost = 1 + h.velocity * 0.12
+            // Add ripple effect - pulsing size based on time and particle age
+            const ripple = 1 + Math.sin(time * 8 + t * 10) * 0.3 * (1 - t)
+            sizeAttr.array[i] = baseSize * velocityBoost * ripple
 
-          const ageFade = Math.pow(1 - t, 1.2)  // Smoother fade curve
-          const velocityThreshold = 1.2
-          // Smooth transition to avoid visible “on/off” popping (reads as jitter).
-          const velocityFade = Math.pow(smoothstep(velocityThreshold, velocityThreshold + 1.3, h.velocity), 0.85)
-          alphaAttr.array[i] = ageFade * velocityFade * Config.particleOpacity * 1.2  // Slightly higher for glow
+            const ageFade = Math.pow(1 - t, 1.2)  // Smoother fade curve
+            const velocityThreshold = 1.2
+            // Smooth transition to avoid visible “on/off” popping (reads as jitter).
+            const velocityFade = Math.pow(smoothstep(velocityThreshold, velocityThreshold + 1.3, h.velocity), 0.85)
+            alphaAttr.array[i] = ageFade * velocityFade * Config.particleOpacity * 1.2  // Slightly higher for glow
 
-          const hue = (Config.baseHue + t * 25 + time * 8) % 360
-          tmpColor.setHSL(hue / 360, Config.saturation, Config.lightness)
-          colorAttr.array[i * 3] = tmpColor.r
-          colorAttr.array[i * 3 + 1] = tmpColor.g
-          colorAttr.array[i * 3 + 2] = tmpColor.b
+            const hue = (Config.baseHue + t * 25 + time * 8) % 360
+            tmpColor.setHSL(hue / 360, Config.saturation, Config.lightness)
+            colorAttr.array[i * 3] = tmpColor.r
+            colorAttr.array[i * 3 + 1] = tmpColor.g
+            colorAttr.array[i * 3 + 2] = tmpColor.b
+          }
+
+          posAttr.needsUpdate = true
+          sizeAttr.needsUpdate = true
+          alphaAttr.needsUpdate = true
+          colorAttr.needsUpdate = true
         }
-
-        posAttr.needsUpdate = true
-        sizeAttr.needsUpdate = true
-        alphaAttr.needsUpdate = true
-        colorAttr.needsUpdate = true
 
         // Update background
         bg.material.uniforms.uTime.value = time
@@ -749,7 +753,7 @@ function App() {
   return (
     <>
       <div ref={containerRef} style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1, background: '#000000' }} />
-      <FluidCursor />
+      {Config.enableFluid && <FluidCursor />}
 
       <div style={{
         position: 'fixed',

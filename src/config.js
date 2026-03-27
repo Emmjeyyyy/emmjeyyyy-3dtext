@@ -15,5 +15,7 @@ export const Config = {
   bloomStrength: 0.75,
   bloomRadius: 1.0,
   bloomThreshold: 0.88,
-  textSpacing: 0.1  // Adjust this to change the gap between 3D letters
+  textSpacing: 0.1,  // Adjust this to change the gap between 3D letters
+  enableFluid: false,
+  enableTrail: false
 }
