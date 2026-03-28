@@ -245,18 +245,6 @@ function App() {
       })
 
       // Add dynamic lights with softened intensities for a balanced appearance
-      const keyLight = new THREE.PointLight(0xffffff, 0.9, 40)
-      keyLight.position.set(5, 5, 10)
-      scene.add(keyLight)
-
-      const fillLight = new THREE.PointLight(0xddeeff, 0.7, 30)
-      fillLight.position.set(-5, 3, 10)
-      scene.add(fillLight)
-
-      const rimLight = new THREE.PointLight(0xffffff, 0.6, 25)
-      rimLight.position.set(0, -3, 10)
-      scene.add(rimLight)
-
       // Add ambient light for smooth base illumination
       const ambientLight = new THREE.AmbientLight(0xffffff, 0.25)
       scene.add(ambientLight)
@@ -684,24 +672,6 @@ function App() {
 
         // Update dynamic circular spot lights
         // Calculate distance from center (where text is) for subtle intensity pulse
-        const distFromCenter = Math.sqrt(smoothedCursor.x * smoothedCursor.x + smoothedCursor.y * smoothedCursor.y)
-        const proximityFactor = Math.max(0, 1 - distFromCenter * 0.5)
-
-        keyLight.position.x = smoothedCursor.x * 8 + 5
-        keyLight.position.y = smoothedCursor.y * 5 + 5
-        keyLight.intensity = 0.3 + proximityFactor * 0.3
-        keyLight.color.set(0xffffff)
-
-        fillLight.position.x = smoothedCursor.x * 8 - 5
-        fillLight.position.y = smoothedCursor.y * 5 + 3
-        fillLight.intensity = 0.2 + proximityFactor * 0.2
-        fillLight.color.set(0xf0f0f0)
-
-        rimLight.position.x = smoothedCursor.x * 8
-        rimLight.position.y = smoothedCursor.y * 5 - 3
-        rimLight.intensity = 0.25 + proximityFactor * 0.25
-        rimLight.color.set(0xffffff)
-
         composer.render()
       }
 
