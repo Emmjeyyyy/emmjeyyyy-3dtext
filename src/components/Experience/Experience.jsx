@@ -533,7 +533,9 @@ const Experience = ({ setError }) => {
               if (index === letterMeshesRef.current.length - 1) isResettingRef.current = false
             }
           } else {
-            mesh.rotation.x = smoothedCursor.y * 0.15; mesh.rotation.y = smoothedCursor.x * 0.15
+            // Updated to tilt TOWARDS the cursor
+            mesh.rotation.x = -smoothedCursor.y * 0.35 
+            mesh.rotation.y = smoothedCursor.x * 0.35
           }
         })
 
