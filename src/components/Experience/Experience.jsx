@@ -388,15 +388,22 @@ const Experience = ({ setError }) => {
 
       const handleMouseDown = (e) => {
         if (e.button !== 0) return
-        isMouseDownRef.current = true
+        
+        // Initial scatter trigger: must click on a letter
         if (!isExplodedRef.current && !isResettingRef.current) {
+          if (!isHovered) return 
+          isMouseDownRef.current = true
           isExplodedRef.current = true
           letterMeshesRef.current.forEach(item => {
             item.velocity.set((Math.random() - 0.5) * 12, (Math.random() - 0.5) * 12, 0)
             item.angularVelocity.set((Math.random() - 0.5) * 0.05, (Math.random() - 0.5) * 0.05, (Math.random() - 0.5) * 0.05)
           })
+          isAttractingRef.current = true
+        } else if (isExplodedRef.current) {
+          // Attraction phase: allow global clicks to trigger the black hole
+          isMouseDownRef.current = true
+          isAttractingRef.current = true
         }
-        if (isExplodedRef.current) isAttractingRef.current = true
       }
 
       const handleMouseUp = (e) => {
@@ -456,7 +463,7 @@ const Experience = ({ setError }) => {
 
         raycaster.setFromCamera(currentMouse, camera)
         const intersects = raycaster.intersectObjects(letterMeshesRef.current.map(l => l.mesh))
-        isHovered = intersects.length > 0 && !isExplodedRef.current && !isResettingRef.current
+        isHovered = intersects.length > 0
 
         if (isAttractingRef.current) {
           document.body.style.cursor = 'crosshair'

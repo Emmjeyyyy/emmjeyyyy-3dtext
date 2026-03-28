@@ -39,17 +39,17 @@ const Overlay = ({ error }) => {
         color: '#ffffff',
         textTransform: 'uppercase'
       }}>
-        Move your cursor & click
+        3D TEXT TEST
       </p>
 
       {error && (
-        <div id="error-boundary" style={{ 
-          position: 'fixed', 
-          top: '50%', 
-          left: '50%', 
-          transform: 'translate(-50%, -50%)', 
-          color: '#ff4444', 
-          zIndex: 10 
+        <div id="error-boundary" style={{
+          position: 'fixed',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          color: '#ff4444',
+          zIndex: 10
         }}>
           Error: {error}
         </div>
