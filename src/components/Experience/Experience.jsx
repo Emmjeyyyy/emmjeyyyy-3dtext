@@ -124,6 +124,9 @@ const Experience = ({ setError }) => {
     const tmpCursorVelocity = new THREE.Vector2()
     const tmpRelativePos = new THREE.Vector2()
     const tmpColor = new THREE.Color()
+    const tmpColliderA = new THREE.Vector2()
+    const tmpColliderB = new THREE.Vector2()
+    const tmpNormal2D = new THREE.Vector2()
     let isHovered = false
     const smoothstep = (edge0, edge1, x) => {
       const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)))
@@ -240,6 +243,7 @@ const Experience = ({ setError }) => {
           currentX += width + letterGap
           scene.add(mesh)
           const colliders = getColliders(char, width, height)
+          const boundRadius = colliders.reduce((maxR, c) => Math.max(maxR, c.offset.length() + c.r), Math.max(width, height) * 0.45)
           meshes.push({
             mesh,
             originalPos: mesh.position.clone(),
@@ -247,6 +251,7 @@ const Experience = ({ setError }) => {
             velocity: new THREE.Vector3(),
             angularVelocity: new THREE.Vector3(),
             colliders,
+            boundRadius,
             width, height
           })
         })
@@ -264,6 +269,122 @@ const Experience = ({ setError }) => {
       const handleTouchMove = e => e.touches[0] && updateMouse(e.touches[0].clientX, e.touches[0].clientY)
 
       const handleContextMenu = e => e.preventDefault()
+      const fixedZ = 1
+      const physicsSubsteps = 3
+      const collisionIterations = 4
+
+      const getColliderWorld2D = (item, collider, out) => {
+        const angle = item.mesh.rotation.z
+        const cos = Math.cos(angle)
+        const sin = Math.sin(angle)
+        const localX = collider.offset.x
+        const localY = collider.offset.y
+        out.set(
+          item.mesh.position.x + localX * cos - localY * sin,
+          item.mesh.position.y + localX * sin + localY * cos
+        )
+      }
+
+      const clampToBounds = (item) => {
+        const { mesh, velocity, angularVelocity, boundRadius } = item
+        if (Math.abs(mesh.position.x) > hw - boundRadius) {
+          mesh.position.x = Math.sign(mesh.position.x) * (hw - boundRadius)
+          velocity.x *= -0.75
+          angularVelocity.z += (Math.random() - 0.5) * 0.02
+        }
+        if (Math.abs(mesh.position.y) > hh - boundRadius) {
+          mesh.position.y = Math.sign(mesh.position.y) * (hh - boundRadius)
+          velocity.y *= -0.75
+          angularVelocity.z += (Math.random() - 0.5) * 0.02
+        }
+        mesh.position.z = fixedZ
+        velocity.z = 0
+      }
+
+      const resolveCharacterCollisions = () => {
+        const restitution = 0.12
+        const friction = 0.08
+        const minDistEps = 1e-6
+        const slop = 0.001
+        const correctionPercent = 0.95
+        const pairCount = letterMeshesRef.current.length
+
+        for (let iteration = 0; iteration < collisionIterations; iteration++) {
+          for (let i = 0; i < pairCount - 1; i++) {
+            const itemA = letterMeshesRef.current[i]
+            for (let j = i + 1; j < pairCount; j++) {
+              const itemB = letterMeshesRef.current[j]
+
+              itemA.colliders.forEach((c1) => {
+                getColliderWorld2D(itemA, c1, tmpColliderA)
+                itemB.colliders.forEach((c2) => {
+                  getColliderWorld2D(itemB, c2, tmpColliderB)
+
+                  const dx = tmpColliderA.x - tmpColliderB.x
+                  const dy = tmpColliderA.y - tmpColliderB.y
+                  const minDist = c1.r + c2.r
+                  const distSq = dx * dx + dy * dy
+                  if (distSq >= minDist * minDist) return
+
+                  let dist = Math.sqrt(distSq)
+                  if (dist < minDistEps) {
+                    tmpNormal2D.set(itemA.mesh.position.x - itemB.mesh.position.x, itemA.mesh.position.y - itemB.mesh.position.y)
+                    if (tmpNormal2D.lengthSq() < minDistEps) tmpNormal2D.set(1, 0)
+                    tmpNormal2D.normalize()
+                    dist = 0
+                  } else {
+                    tmpNormal2D.set(dx / dist, dy / dist)
+                  }
+
+                  const overlap = minDist - dist
+                  const correctedOverlap = Math.max(0, overlap - slop) * correctionPercent
+                  const correctionX = tmpNormal2D.x * correctedOverlap * 0.5
+                  const correctionY = tmpNormal2D.y * correctedOverlap * 0.5
+                  itemA.mesh.position.x += correctionX
+                  itemA.mesh.position.y += correctionY
+                  itemB.mesh.position.x -= correctionX
+                  itemB.mesh.position.y -= correctionY
+
+                  const relVx = itemA.velocity.x - itemB.velocity.x
+                  const relVy = itemA.velocity.y - itemB.velocity.y
+                  const velAlongNormal = relVx * tmpNormal2D.x + relVy * tmpNormal2D.y
+                  if (velAlongNormal > 0) return
+
+                  const invMassSum = 2
+                  const impulseMag = (-(1 + restitution) * velAlongNormal) / invMassSum
+                  const impulseX = tmpNormal2D.x * impulseMag
+                  const impulseY = tmpNormal2D.y * impulseMag
+
+                  itemA.velocity.x += impulseX
+                  itemA.velocity.y += impulseY
+                  itemB.velocity.x -= impulseX
+                  itemB.velocity.y -= impulseY
+
+                  const tangentX = -tmpNormal2D.y
+                  const tangentY = tmpNormal2D.x
+                  const relTanVel = relVx * tangentX + relVy * tangentY
+                  const frictionImpulseMag = (-relTanVel * friction) / invMassSum
+                  const frictionX = tangentX * frictionImpulseMag
+                  const frictionY = tangentY * frictionImpulseMag
+                  itemA.velocity.x += frictionX
+                  itemA.velocity.y += frictionY
+                  itemB.velocity.x -= frictionX
+                  itemB.velocity.y -= frictionY
+
+                  const armAx = tmpColliderA.x - itemA.mesh.position.x
+                  const armAy = tmpColliderA.y - itemA.mesh.position.y
+                  const armBx = tmpColliderB.x - itemB.mesh.position.x
+                  const armBy = tmpColliderB.y - itemB.mesh.position.y
+                  const torqueA = armAx * impulseY - armAy * impulseX
+                  const torqueB = armBx * -impulseY - armBy * -impulseX
+                  itemA.angularVelocity.z += torqueA * 0.004
+                  itemB.angularVelocity.z += torqueB * 0.004
+                })
+              })
+            }
+          }
+        }
+      }
 
       const handleMouseDown = (e) => {
         if (e.button !== 0) return
@@ -271,7 +392,7 @@ const Experience = ({ setError }) => {
         if (!isExplodedRef.current && !isResettingRef.current) {
           isExplodedRef.current = true
           letterMeshesRef.current.forEach(item => {
-            item.velocity.set((Math.random() - 0.5) * 12, (Math.random() - 0.5) * 12, (Math.random() - 0.5) * 10)
+            item.velocity.set((Math.random() - 0.5) * 12, (Math.random() - 0.5) * 12, 0)
             item.angularVelocity.set((Math.random() - 0.5) * 0.05, (Math.random() - 0.5) * 0.05, (Math.random() - 0.5) * 0.05)
           })
         }
@@ -287,7 +408,6 @@ const Experience = ({ setError }) => {
             item.velocity.copy(throwVelocity)
             item.velocity.x += (Math.random() - 0.5) * 8
             item.velocity.y += (Math.random() - 0.5) * 8
-            item.velocity.z += (Math.random() - 0.5) * 6
             item.angularVelocity.add(new THREE.Vector3((Math.random() - 0.5) * 0.1, (Math.random() - 0.5) * 0.1, (Math.random() - 0.5) * 0.1))
           })
           isAttractingRef.current = false
@@ -390,56 +510,13 @@ const Experience = ({ setError }) => {
 
         const repulsionRadius = 4.0; const repulsionStrength = 0.5
         letterMeshesRef.current.forEach((item, index) => {
-          const { mesh, velocity, angularVelocity, originalPos, originalRot, colliders, width, height } = item
+          const { mesh, velocity, angularVelocity, originalPos, originalRot } = item
           if (isExplodedRef.current) {
-            velocity.multiplyScalar(0.99); angularVelocity.multiplyScalar(0.94)
-            mesh.position.add(velocity.clone().multiplyScalar(dt))
-            mesh.rotation.x += angularVelocity.x; mesh.rotation.y += angularVelocity.y; mesh.rotation.z += angularVelocity.z
-            const mainR = width * 0.5
-            if (Math.abs(mesh.position.x) > hw - mainR) {
-              velocity.x *= -0.75; mesh.position.x = Math.sign(mesh.position.x) * (hw - mainR)
-              angularVelocity.y += (Math.random() - 0.5) * velocity.x * 0.02; angularVelocity.z += (Math.random() - 0.5) * velocity.x * 0.01
-            }
-            if (Math.abs(mesh.position.y) > hh - mainR) {
-              velocity.y *= -0.75; mesh.position.y = Math.sign(mesh.position.y) * (hh - mainR)
-              angularVelocity.x += (Math.random() - 0.5) * velocity.y * 0.02; angularVelocity.z += (Math.random() - 0.5) * velocity.y * 0.01
-            }
-            if (Math.abs(mesh.position.z) > 4) { velocity.z *= -0.8; mesh.position.z = Math.sign(mesh.position.z) * 4 }
-            const mouseWorld = new THREE.Vector2(currentMouse.x * hw, currentMouse.y * hh)
-            tmpRelativePos.set(mesh.position.x - mouseWorld.x, mesh.position.y - mouseWorld.y)
-            const distToMouse = tmpRelativePos.length()
-            if (isAttractingRef.current) {
-              const attractionStrength = 1.8
-              const pull = tmpRelativePos.clone().normalize().multiplyScalar(-attractionStrength)
-              velocity.add(new THREE.Vector3(pull.x, pull.y, 0))
-              const swirlStrength = 0.6; const swirl = new THREE.Vector3(-pull.y, pull.x, 0).multiplyScalar(swirlStrength)
-              velocity.add(swirl); velocity.multiplyScalar(0.92); angularVelocity.multiplyScalar(0.88)
-            } else if (distToMouse < repulsionRadius) {
-              const force = (1.0 - distToMouse / repulsionRadius) * repulsionStrength
-              velocity.x += tmpRelativePos.x * force; velocity.y += tmpRelativePos.y * force
-            }
-            for (let j = index + 1; j < letterMeshesRef.current.length; j++) {
-              const other = letterMeshesRef.current[j]
-              colliders.forEach(c1 => {
-                const worldC1 = c1.offset.clone().applyQuaternion(mesh.quaternion).add(mesh.position)
-                other.colliders.forEach(c2 => {
-                  const worldC2 = c2.offset.clone().applyQuaternion(other.mesh.quaternion).add(other.mesh.position)
-                  const diff = worldC1.clone().sub(worldC2); const minDist = c1.r + c2.r
-                  if (diff.length() < minDist) {
-                    const normal = diff.normalize(); const overlap = minDist - diff.length()
-                    const resolveVec = normal.clone().multiplyScalar(overlap * 0.5)
-                    mesh.position.add(resolveVec); other.mesh.position.sub(resolveVec)
-                    const impulse = normal.clone().multiplyScalar(velocity.clone().sub(other.velocity).length() * 0.35 + 0.05)
-                    velocity.add(impulse); other.velocity.sub(impulse)
-                    const torque1 = c1.offset.clone().cross(impulse).multiplyScalar(0.03)
-                    const torque2 = c2.offset.clone().cross(impulse.clone().negate()).multiplyScalar(0.03)
-                    angularVelocity.add(torque1); other.angularVelocity.add(torque2)
-                  }
-                })
-              })
-            }
+            mesh.position.z = fixedZ
+            velocity.z = 0
           } else if (isResettingRef.current) {
             mesh.position.lerp(originalPos, 0.15)
+            mesh.position.z = fixedZ
             mesh.rotation.x = THREE.MathUtils.lerp(mesh.rotation.x, originalRot.x, 0.15)
             mesh.rotation.y = THREE.MathUtils.lerp(mesh.rotation.y, originalRot.y, 0.15)
             mesh.rotation.z = THREE.MathUtils.lerp(mesh.rotation.z, originalRot.z, 0.15)
@@ -452,6 +529,50 @@ const Experience = ({ setError }) => {
             mesh.rotation.x = smoothedCursor.y * 0.15; mesh.rotation.y = smoothedCursor.x * 0.15
           }
         })
+
+        if (isExplodedRef.current) {
+          const mouseWorldX = currentMouse.x * hw
+          const mouseWorldY = currentMouse.y * hh
+          const substepDt = delta / physicsSubsteps
+
+          for (let step = 0; step < physicsSubsteps; step++) {
+            letterMeshesRef.current.forEach((item) => {
+              const { mesh, velocity, angularVelocity } = item
+              velocity.multiplyScalar(0.992)
+              angularVelocity.multiplyScalar(0.94)
+
+              tmpRelativePos.set(mesh.position.x - mouseWorldX, mesh.position.y - mouseWorldY)
+              const distToMouse = tmpRelativePos.length()
+              if (isAttractingRef.current) {
+                const attractionStrength = 1.8
+                const safeDist = Math.max(distToMouse, 0.001)
+                const nx = tmpRelativePos.x / safeDist
+                const ny = tmpRelativePos.y / safeDist
+                velocity.x += -nx * attractionStrength
+                velocity.y += -ny * attractionStrength
+                velocity.x += ny * 0.6
+                velocity.y += -nx * 0.6
+                velocity.multiplyScalar(0.93)
+                angularVelocity.multiplyScalar(0.9)
+              } else if (distToMouse < repulsionRadius && distToMouse > 0.001) {
+                const force = (1.0 - distToMouse / repulsionRadius) * repulsionStrength
+                velocity.x += (tmpRelativePos.x / distToMouse) * force
+                velocity.y += (tmpRelativePos.y / distToMouse) * force
+              }
+
+              mesh.position.x += velocity.x * substepDt
+              mesh.position.y += velocity.y * substepDt
+              mesh.position.z = fixedZ
+              mesh.rotation.x += angularVelocity.x
+              mesh.rotation.y += angularVelocity.y
+              mesh.rotation.z += angularVelocity.z
+              clampToBounds(item)
+            })
+
+            resolveCharacterCollisions()
+            letterMeshesRef.current.forEach(clampToBounds)
+          }
+        }
         composer.render()
       }
       animate()
