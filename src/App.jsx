@@ -253,8 +253,9 @@ function App() {
       const tmpColor = new THREE.Color()
       const tmpTextColor = new THREE.Color()
       const tmpLightColor = new THREE.Color()
-      const tmpLightColor2 = new THREE.Color()
-      const tmpDeltaPos = new THREE.Vector2()
+      const tmpCursorVelocity = new THREE.Vector2()
+      const tmpRelativePos = new THREE.Vector2()
+      const tmpForce = new THREE.Vector2()
 
       // Load font and create individual 3D letters for physics
       const fontLoader = new FontLoader()
@@ -369,15 +370,16 @@ function App() {
 
       // Click to scatter / Double-click to reset / Hold to attract
       const handleMouseDown = (e) => {
-        if (e.button !== 0) return // Only left click
+        if (e.button !== 0) return
         isMouseDownRef.current = true
         
-        if (!isExplodedRef.current && !isResettingRef.current && isHovered) {
+        if (!isExplodedRef.current && !isResettingRef.current) {
           isExplodedRef.current = true
           letterMeshesRef.current.forEach(item => {
+            // Initial subtle scatter
             item.velocity.set(
-              (Math.random() - 0.5) * 15,
-              (Math.random() - 0.5) * 15,
+              (Math.random() - 0.5) * 12,
+              (Math.random() - 0.5) * 12,
               (Math.random() - 0.5) * 10
             )
             item.angularVelocity.set(
@@ -385,28 +387,35 @@ function App() {
               (Math.random() - 0.5) * 0.05,
               (Math.random() - 0.5) * 0.05
             )
-          })
-        } else if (isExplodedRef.current) {
+          });
+        }
+        
+        if (isExplodedRef.current) {
           isAttractingRef.current = true
         }
       }
 
       const handleMouseUp = (e) => {
-        if (e.button !== 0) return // Only left click release
+        if (e.button !== 0) return
         if (isAttractingRef.current) {
-          // Explosive scatter back naturally
-          const explosionStrength = 18
-          const mouseWorld = new THREE.Vector3(currentMouse.x * hw, currentMouse.y * hh, 1)
+          // Physics-based throw logic
+          // Use the current cursor velocity vector to determine the throw direction and magnitude
+          const throwScale = 45 // Adjust for power
+          const throwVelocity = new THREE.Vector3(
+            tmpCursorVelocity.x * hw * throwScale,
+            tmpCursorVelocity.y * hh * throwScale,
+            0
+          )
           
           letterMeshesRef.current.forEach(item => {
-            const dir = item.mesh.position.clone().sub(mouseWorld).normalize()
-            // Add some randomness to the direction
-            dir.x += (Math.random() - 0.5) * 0.4
-            dir.y += (Math.random() - 0.5) * 0.4
-            dir.z += (Math.random() - 0.5) * 0.4
-            dir.normalize()
+            // Apply momentum from the throw plus some "radial burst" for flavor
+            item.velocity.copy(throwVelocity)
             
-            item.velocity.add(dir.multiplyScalar(explosionStrength + Math.random() * 8))
+            // Add slight random dispersion so they don't move in a perfect line
+            item.velocity.x += (Math.random() - 0.5) * 8
+            item.velocity.y += (Math.random() - 0.5) * 8
+            item.velocity.z += (Math.random() - 0.5) * 6
+            
             item.angularVelocity.add(new THREE.Vector3(
               (Math.random() - 0.5) * 0.1,
               (Math.random() - 0.5) * 0.1,
@@ -484,8 +493,8 @@ function App() {
         const lerpFactor = 1 - Math.pow(1 - cursorDamping, dt * 60)
         smoothedCursor.lerp(currentMouse, lerpFactor)
 
-        tmpDeltaPos.copy(smoothedCursor).sub(lastSmoothedCursor)
-        velocity = Math.min(tmpDeltaPos.length() * Config.velocityMultiplier * 60, Config.maxVelocity)
+        tmpCursorVelocity.copy(smoothedCursor).sub(lastSmoothedCursor)
+        velocity = Math.min(tmpCursorVelocity.length() * Config.velocityMultiplier * 60, Config.maxVelocity)
 
         // Update trail history
         const history = trail.history
@@ -586,27 +595,27 @@ function App() {
 
             // Mouse proximity repulsion OR Black Hole Attraction
             const mouseWorld = new THREE.Vector2(currentMouse.x * hw, currentMouse.y * hh)
-            tmpDeltaPos.set(mesh.position.x - mouseWorld.x, mesh.position.y - mouseWorld.y)
-            const distToMouse = tmpDeltaPos.length()
+            tmpRelativePos.set(mesh.position.x - mouseWorld.x, mesh.position.y - mouseWorld.y)
+            const distToMouse = tmpRelativePos.length()
 
             if (isAttractingRef.current) {
               // Black Hole Logic: Pull toward cursor
-              const attractionStrength = 1.2
-              const pull = tmpDeltaPos.clone().normalize().multiplyScalar(-attractionStrength)
+              const attractionStrength = 1.8
+              const pull = tmpRelativePos.clone().normalize().multiplyScalar(-attractionStrength)
               velocity.add(new THREE.Vector3(pull.x, pull.y, 0))
               
-              // Add orbit/swirl effect as they get closer
-              const swirlStrength = 0.4
+              // Add orbit/swirl effect as they get closer for dynamic motion
+              const swirlStrength = 0.6
               const swirl = new THREE.Vector3(-pull.y, pull.x, 0).multiplyScalar(swirlStrength)
               velocity.add(swirl)
               
-              // Extra damping when locked in the black hole
-              velocity.multiplyScalar(0.95)
-              angularVelocity.multiplyScalar(0.9)
+              // Extra damping when locked in the black hole to stabilize the clump
+              velocity.multiplyScalar(0.92)
+              angularVelocity.multiplyScalar(0.88)
             } else if (distToMouse < repulsionRadius) {
               const force = (1.0 - distToMouse / repulsionRadius) * repulsionStrength
-              velocity.x += tmpDeltaPos.x * force
-              velocity.y += tmpDeltaPos.y * force
+              velocity.x += tmpRelativePos.x * force
+              velocity.y += tmpRelativePos.y * force
             }
 
             // Advanced Multi-Sphere Collision resolution with Torque
